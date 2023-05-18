@@ -1,3 +1,9 @@
+---
+editor: 
+  markdown: 
+    wrap: sentence
+---
+
 ### Cloning this repository to your local computer with Rstudio
 
 1.  In `RStudio`, go to \"File \> New Project\"
@@ -21,14 +27,15 @@ git pull
 
 ### General Workflow
 
--   Create an issue on Github for features / changes we'd like to see to the code
 -   Each collaborator should create a new branch when they want to make changes or add new features. This can be done using the command: git checkout -b <branch-name>.
-  - You can name the branch something related to the feature/code
 -   They make changes to the files on their local system and commit the changes using git add . to add all the changes and git commit -m "<commit message>" to commit the changes.
 -   After committing the changes, they push the branch to the remote repository using git push origin <branch-name>.
 -   Then, they should open a Pull Request on Github. This is a request to merge the changes in their branch into the main branch.
 -   The other collaborators review the changes and either approve or request changes. Once approved, the changes can be merged into the main branch.
--   After merging, the branch can be deleted both locally (git branch -d <branch-name>) and on the remote repository (git push origin --delete <branch-name>).
+-   After merging, the branch can be deleted both locally and on the remote repository
+  - First switch back to the main branch on your local computer
+  - Then pull in changes
+  - Delete the local branch: (git branch -d <branch-name>) 
 
 
 
