@@ -3,13 +3,22 @@ project:
 
 book:
   title: "CDD appendix"
-  author: "Norah Jones"
+  author: "Authors here--"
   date: "5/18/2023"
+  search: true
+  repo-url: https://github.com/lukembrowne/CDD-appendix
+  repo-actions: [issue, source]
+  downloads: [pdf]
+  page-navigation: true
   chapters:
     - index.qmd
     - intro.qmd
+    - linear_vs_nonlinear.qmd
     - summary.qmd
     - references.qmd
+    
+comments:
+  hypothesis: true
 
 bibliography: references.bib
 
