@@ -1,0 +1,692 @@
+# Linear vs. non-linear
+
+# Problem statement
+ * Why does it matter? Detto shows that it can cause bias with rare species
+ * Table with pros and cons - there will not be one solution for modeling non linearities
+ * Many options in R for doing non-linearities, but don't want to showing code for all possible options
+   * if you want to fit parameteric models, bayesian is a good approach
+   * without random effects, nlme could work
+ 
+
+# Notes
+ * Florian recommendation - because of potential bias in missing non-linearities, maybe should start with a flexible model like GAM and then only if you're sure it's non-linear
+   * As shown in detto paper with linking to abundance of species, but also across sites that vary in abundance
+ * but maybe overfits with low data
+ * would you be on average closer to the truth going with a glmer than a gam?
+ * maybe quadratic isn't the best
+* if just interested in slope, just use glme4
+* but interested in comparison, use something flexible
+* should we just use gams?
+  * would you have to run it separately for each species all the time?
+  * in gams, can't have species specific responses, can have different slopes but not nodes
+  * a full blown simulation study would be useful to develop these recommendations, but maybe out of the scope of the appendix - but shoudl we do this befoer we even develop these recommendations?
+  * p value in mgcv is for evidence of nonlinearity
+  * can't estimate amount of wiggliness for each species, only as a fixed effect
+  * cannot provide a recommendation that would fit for everyone
+  * tradeoffs - gams are useful and adaptive, difficult to get random slopes, 
+  * pragmatic reasons for using a gam, but is problematic in linking it to theory,
+    * should not extrapolate from a gam, but can from parametric linear model - makes restrictive assumptions about functional form and can be a pain to fit
+    * if integrating into an IBM or smoething, then would need a parametric approach to extrapolate at densities not observed in the data
+    * but for hypothesis testing, semi-parametric approaches might be ok
+  * statisticians say should not fit more than 10 knots
+  * Point by Robi - spatial autocorrelation and assumption of indepdendent residuals might make GAMs really sensitive to clustering effects - like a clump of 5 seedlings getting hit by a treefall and really impacting the smoothing term if each is counted as indepdent - might be helped if including random effects in the gam?
+    
+# Setup
+
+
+```{r message=FALSE, warning=FALSE}
+
+# Load libraries ----------------------------------------------------------
+
+  library(tidyverse)
+  library(lubridate)
+  library(rstan)
+  library(brms)
+  library(DHARMa)  # For model diagnostics https://cran.r-project.org/web/packages/DHARMa/vignettes/DHARMa.html
+  library(mgcv) # For gam models
+  library(lme4)
+  library(tictoc)
+  library(DHARMa.helpers) # remotes::install_github("Pakillo/DHARMa.helpers")
+  library(performance)
+  library(tidybayes)
+  library(modelr)
+
+  
+  # Stan options
+  options(mc.cores = parallel::detectCores())
+  rstan_options(auto_write = FALSE)
+  
+  
+# Set seed for reproducibility --------------------------------------
+  
+  set.seed(42)  
+
+
+# Set parallel computing environment --------------------------------------
+  library(parallel)
+  library(foreach)
+  cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+  
+
+  
+  
+```
+
+```{r Setting sample sizes and parameters, message=FALSE}
+
+# Set sample sizes
+  max_ind_per_plot <- 40   # Maximum number of individuals of each species per plot
+  n_species <- 10 # Number of species in overall data set
+  n_census <- 5 # Number of censuses in data set
+  n_plots <- 25 # Number of seedling plots nested within each site
+  n_sites <- 1 # Number of sites
+  
+# Set parameter values (response will be on logit scale)
+  u_intercept <- 1.8 
+
+# Variances of random effects
+  sigma_species     <-  .25
+  sigma_census      <-  .25
+  sigma_site        <-  .25
+  sigma_plot        <-  .25
+  sigma_noise       <-  .10 # Residual noise - increasing this adds more noise to the data
+  
+# Set strength of NDD effects   
+  beta_NDD <- -1.0 # Community-wide non-linear NDD effects  
+  beta_NDD2 <- -0.4 # Quadratic term for non-linear NDD effects
+  
+
+``` 
+
+
+## Create dataset and variation in densities across plots
+* We start with a maximum dataset with 'max_ind_per_plot' individuals per species at each plot and then subset it down later to create variation in densities across plots
+
+```{r Initializing dataset, message=FALSE}
+
+# Create names for species, plots, censuses, and sites  
+  spp_names <- paste0("SPP", str_pad(1:n_species, width = 3, pad = 0))
+  plot_names <- paste0("P", str_pad(1:n_plots, width = 4, pad = 0))
+  census_names <-  paste0("C", str_pad(1:n_census, width = 2, pad = 0))
+  site_names <-  paste0("S", str_pad(1:n_sites, width = 2, pad = 0))
+
+# Use expand.grid to start to build out dataset
+ dat.sim <-  expand.grid( ind_num = 1:max_ind_per_plot,
+                                spp = spp_names,
+                                plot = plot_names,
+                                site = site_names)
+ 
+# Create unique IDs for each individual 
+ dat.sim$id <- paste0("IND", str_pad(1:nrow(dat.sim), width = 5, pad = 0))
+ 
+ 
+# Expand out censuses so that each individual gets censused n_census times
+ dat.sim <- left_join(dat.sim , 
+                            expand.grid(id = dat.sim$id,
+                                        census = census_names)) %>%
+                  dplyr::select(id, everything()) %>%
+                  as_tibble()
+
+
+# Create variation in densities across plots
+  # For each species plot combination, sample just a fraction of the seedlings that are there
+ 
+  # Using a beta function for the sampling distribution to weight towards lower density plots
+    # Can try out different shapes with this code: 
+    # hist(rbeta(1000, shape1 = .25, shape2 = 1.5), breaks = 50)
+ 
+  dat.sim <- dat.sim %>%
+    group_by(spp, plot, census, site) %>% # Group by species and plot
+    nest() %>% # Turns data into a list-column that can be sampled
+    ungroup() %>%
+    mutate(fraction_to_keep = rbeta(nrow(.), # Generate what fraction of total maximum # of seedlings to keep at each plot
+                                    shape1 = .25, 
+                                    shape2 = 1.5)) %>% 
+    mutate(samp = map2(data, fraction_to_keep, sample_frac)) %>% # Sampling happens here
+    select(-c(data, fraction_to_keep)) %>% # Clean up and unnest
+    unnest(samp)
+
+
+# Create unique IDs for plots nested within sites
+ dat.sim$plot <- paste0(dat.sim$site, "-", dat.sim$plot)
+
+ # Add species.census column
+ dat.sim$species.census <- paste0(dat.sim$spp, "-", dat.sim$census)
+ 
+ # Take a look at the data set
+ dat.sim
+ 
+ # Print out stats
+   # Dataset stats -----------------------------------------------------------
+  
+  cat("Final # observations in dataset: ", nrow(dat.sim), " ...
+      Final # individuals in dataset: ", length(table(dat.sim$id)), " ...
+      Final # species in dataset: ", length(table(dat.sim$spp)), " ...
+      Final # plots in dataset: ", length(table(dat.sim$plot)), " ...
+      Final # sites in dataset: ", length(table(dat.sim$site)), " ...
+      Final # censuses in dataset: ", length(table(dat.sim$census)), " ...")
+
+``` 
+
+
+
+## Calculate conspecific density at each plot
+
+```{r Calculate conspecific density, message=FALSE}
+# Calculate conspecific density at each plot and add as 'con_dens' column
+dat.sim <- dat.sim %>%
+                    group_by(spp, census, plot, site) %>%
+                    add_tally() %>% # Counts individuals in plot
+                    rename(con_dens = n) %>%
+                    mutate(con_dens = con_dens - 1) %>% # Subtract by 1 to remove counting self
+                    ungroup()
+
+# Scale con_dens
+dat.sim$con_dens_scaled <- scale(dat.sim$con_dens)[, 1]
+
+
+# Plot histogram of densities
+ggplot(dat.sim, aes(x = con_dens)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
+  labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
+  theme_bw(12)
+
+```
+
+
+
+## Plot effect of NDD on survival
+
+```{r Simulate effect of internannual variation in NDD on survival}
+
+
+# Simulate overall NDD response averaged across all species
+  dat.sim$NDD.effect <- beta_NDD
+  dat.sim$NDD2.effect <- beta_NDD2 # Quadratic term for non-linear effects
+
+
+# Plot community-wide effect of NDD on survival
+  p = ggplot(dat.sim, aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect + con_dens_scaled^2 * NDD2.effect)) + 
+      geom_line(col = "steelblue2", lwd = 2) +
+      geom_line(aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect), col = "red", lwd = 2) +
+      labs(x = "Conspecific density (scaled)", y = "Marginal effect on survival (logit scale)", title = "Effect of NDD on survival") + 
+      theme_bw()
+  
+  p
+  
+```
+
+
+
+
+## Simulating random intercepts
+  * Species
+  * Census
+  * Plots
+  * Sites
+  
+```{r Simulating species-level intercepts, message=FALSE}
+ # Generate species intercepts 
+  dat.sim <- dat.sim %>% 
+    distinct(spp) %>% 
+    mutate(spp.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(spp.effect = (spp.effect - mean(spp.effect)) / 
+             (( 1 / sigma_species) * sd(spp.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# Generate census effects
+    dat.sim <- dat.sim %>% 
+      distinct(census) %>% 
+      mutate(census.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+      mutate(census.effect = (census.effect - mean(census.effect)) / 
+                             (( 1 / sigma_census) * sd(census.effect))) %>% # Rescale to get actual simulated sigma
+      left_join(., dat.sim)
+ 
+# Generate plot effects
+  dat.sim <- dat.sim %>% 
+    distinct(plot) %>% 
+    mutate(plot.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(plot.effect = (plot.effect - mean(plot.effect)) / 
+             (( 1 / sigma_plot) * sd(plot.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+  
+
+# Generate site effects
+  dat.sim <- dat.sim %>% 
+    distinct(site) %>% 
+    mutate(site.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(site.effect = (site.effect - mean(site.effect)) / 
+             (( 1 / sigma_site) * sd(site.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# If simulating only 1 site, set this effect to 0
+if(n_sites == 1){
+  dat.sim$site.effect <- 0
+} 
+```
+
+## Simulate residual noise
+```{r Simulate residual noise}
+  dat.sim$noise <- rnorm(nrow(dat.sim), mean = 0, sd = sigma_noise)
+
+```
+
+
+## Simulate survival probability based on parameters above
+```{r Simulate survival probability based on parameters above, message=FALSE}
+
+# First calculate effect on logit scale
+  dat.sim$surv.logit <- with(dat.sim, # using 'with' function here to condense code
+                                   c(u_intercept + 
+                                     spp.effect + 
+                                     census.effect +
+                                     plot.effect +
+                                     site.effect +
+                                     noise))
+
+  # Add in NDD effects
+   dat.sim$surv.logit.linear =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled)
+   
+    dat.sim$surv.logit.quadratic =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled +
+                                   NDD2.effect * con_dens_scaled^2 )
+
+  # Convert from logit scale to probability of survival 
+   dat.sim$surv.prob.linear <- plogis(dat.sim$surv.logit.linear)
+   dat.sim$surv.prob.quadratic <- plogis(dat.sim$surv.logit.quadratic)
+
+```
+
+
+## Finally, determine if each seedling is observed alive or dead for each census
+* Draw from a binomial distribution where 1 = alive, 0 = dead, based on survival probability 
+```{r Determining if seedling is alive or dead}
+# Determine if alive or dead
+  dead.sim.linear <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.linear[i])
+
+  dead.sim.quadratic <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.quadratic[i])
+
+  # Save in main dataframe
+  dat.sim$status.linear <- dead.sim.linear
+  dat.sim$status.quadratic <- dead.sim.quadratic
+
+
+  # Summary stats - number of alive and dead
+
+  cat("Survival rate (linear): ", round(sum(dat.sim$status.linear == 1)/nrow(dat.sim), 2)*100, "%")
+  cat("Survival rate (quadratic): ", round(sum(dat.sim$status.quadratic == 1)/nrow(dat.sim), 2)*100, "%")
+
+```
+ 
+
+# Fit models to linear survival data
+
+* Here, we will fit a set of 3 models 
+  * glm.noquad = GLMER with no quadratic term for NDD
+  * glm.quad = GLMER with a quadratic term
+  * gam.fit = GAM with smoothing term for NDD
+
+::: {.panel-tabset}
+
+## GLM - Linear
+```{r}
+
+# Fit to linear survival data
+glm.linear.noquad <- glmer(status.linear ~ con_dens_scaled + (1 | spp) + (1 | plot) + (1 | census),
+             family = binomial(link = "logit"),
+             control=glmerControl(optimizer="bobyqa"),
+             data = dat.sim)
+
+summary(glm.linear.noquad)
+
+```
+
+## GLM - Quadratic
+```{r}
+glm.linear.quad <- glmer(status.linear ~ con_dens_scaled + I(con_dens_scaled^2) + (1 | spp) + (1 | plot) + (1 | census),
+             family = binomial(link = "logit"),
+             control=glmerControl(optimizer="bobyqa"),
+             data = dat.sim)
+
+summary(glm.linear.quad)
+
+```
+
+## GAM
+```{r}
+ # Need to convert random effects to factors first or will get error when fitting model
+dat.sim$spp <- factor(dat.sim$spp)
+dat.sim$plot <- factor(dat.sim$plot)
+dat.sim$census <- factor(dat.sim$census)
+
+# Fit Gam
+gam.linear <- gam(status.linear ~  
+                  s(con_dens_scaled) + 
+                  s(spp, bs = "re") + 
+                  s(plot, bs = "re") + 
+                  s(census, bs = "re"),
+                  family = binomial(link = "logit"),
+                  method = "ML", # use this to be able to get confidence intervals
+                  data = dat.sim)
+
+summary(gam.linear)
+```
+
+:::
+
+
+# Fit models to quadratic survival data
+
+::: {.panel-tabset}
+
+## GLM - Linear
+
+```{r}
+
+# Fit to quadratic survival data
+glm.quadratic.noquad <- glmer(status.quadratic ~ con_dens_scaled + (1 | spp) + (1 | plot) + (1 | census),
+             family = binomial(link = "logit"),
+             control=glmerControl(optimizer="bobyqa"),
+             data = dat.sim)
+
+summary(glm.quadratic.noquad)
+
+```
+
+## GLM - Quadratic
+
+```{r}
+glm.quadratic.quad <- glmer(status.quadratic ~ con_dens_scaled + I(con_dens_scaled^2) + (1 | spp) + (1 | plot) + (1 | census),
+             family = binomial(link = "logit"),
+             control=glmerControl(optimizer="bobyqa"),
+             data = dat.sim)
+
+summary(glm.quadratic.quad)
+
+```
+
+## GAM
+
+```{r}
+# Fit Gam
+gam.quadratic <- gam(status.quadratic ~  
+                  s(con_dens_scaled) + 
+                  s(spp, bs = "re") + 
+                  s(plot, bs = "re") + 
+                  s(census, bs = "re"),
+                  family = binomial(link = "logit"),
+                  method = "ML", # use this to be able to get confidence intervals
+                  data = dat.sim)
+
+summary(gam.quadratic)
+```
+
+:::
+
+# Compare models
+
+
+
+## Plotting predicted community-wide change in survival probability  
+
+::: {.panel-tabset}
+
+
+### Linear survival data
+```{r plot surv prob}
+ # Generate prediction dataframe
+  pred <- expand_grid(con_dens_scaled = dat.sim$con_dens_scaled,
+                      total_dens_scaled = 0)
+
+  # Add in truth
+  pred$truth.linear <- plogis(u_intercept + 
+                       pred$con_dens_scaled * beta_NDD)
+
+  # Predict from models
+  pred$pred.glm.linear.noquad <- predict(glm.linear.noquad, 
+                                         newdata = pred, 
+                                         type = "response",
+                                            re.form = ~0)
+  pred$pred.glm.linear.quad <- predict(glm.linear.quad, 
+                                       newdata = pred, 
+                                       type = "response",
+                                       re.form = ~0)
+  pred$pred.gam <- plogis(predict(gam.linear, newdata = pred,
+                                  terms = c("s(con_dens_scaled)", "(Intercept)"),
+                                  newdata.guaranteed=TRUE))
+  
+  # Reformat data to long
+  pred <- pred %>%
+    pivot_longer(-c(con_dens_scaled, total_dens_scaled),
+                 names_to = "model_type", values_to = "pred" )
+
+  # Make plot
+  ggplot(pred, aes(con_dens_scaled, pred, col = model_type)) +
+    geom_line(lwd = 1.5, alpha = 0.75) +
+    scale_color_brewer(palette="Spectral") +
+    labs(x = "con_dens_scaled", y = "Predicted survival probability", title = "Survival probabilty by conspecific density - community wide") +
+    theme_bw(12)
+  
+```  
+
+### Quadratic survival data
+```{r plot surv prob quadratic}
+ # Generate prediction dataframe
+  pred <- expand_grid(con_dens_scaled = dat.sim$con_dens_scaled,
+                      total_dens_scaled = 0) 
+
+  # Add in truth
+  pred$truth.quadratic <- plogis(u_intercept + 
+                       pred$con_dens_scaled * beta_NDD + 
+                       pred$con_dens_scaled^2 * beta_NDD2)
+
+  # Predict from models
+  pred$pred.glm.quadratic.noquad <- predict(glm.quadratic.noquad, 
+                                            newdata = pred, 
+                                            type = "response",
+                                            re.form = ~0)
+  pred$pred.glm.quadratic.quad <- predict(glm.quadratic.quad, 
+                                          newdata = pred, 
+                                          type = "response",
+                                          re.form = ~0)
+  pred$pred.gam <- plogis(predict(gam.quadratic, newdata = pred,
+                                  terms = c("s(con_dens_scaled)", "(Intercept)"),
+                                  newdata.guaranteed=TRUE))
+  
+  # Reformat data to long
+  pred <- pred %>%
+    pivot_longer(-c(con_dens_scaled, total_dens_scaled),
+                 names_to = "model_type", values_to = "pred" )
+
+  # Make plot
+  ggplot(pred, aes(con_dens_scaled, pred, col = model_type)) +
+    geom_line(lwd = 1.5, alpha = 0.75) +
+    scale_color_brewer(palette="Spectral") +
+    labs(x = "con_dens_scaled", y = "Predicted survival probability", title = "Survival probabilty by conspecific density - community wide") +
+    theme_bw(12)
+  
+```  
+
+:::
+
+
+
+## Model diagnostics with DHARMa
+* "The ‘DHARMa’ package uses a simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models."
+
+```{r}
+
+#| warning: false
+
+## Plotting residuals vs. covariates using DHARMa
+
+  # GLMER - linear
+  glm.linear.noquad.sim.resids <- DHARMa::simulateResiduals(fittedModel = glm.linear.noquad, plot = FALSE)
+  glm.quadratic.noquad.sim.resids <- DHARMa::simulateResiduals(fittedModel = glm.quadratic.noquad, plot = FALSE)
+
+  # GLMER - nonlinear
+  glm.linear.quad.sim.resids <- DHARMa::simulateResiduals(fittedModel = glm.linear.quad, plot = FALSE)
+  glm.quadratic.quad.sim.resids <- DHARMa::simulateResiduals(fittedModel = glm.quadratic.quad, plot = FALSE)
+
+  # Gam
+  gam.linear.resids <- DHARMa::simulateResiduals(fittedModel = gam.linear, plot = FALSE)
+  gam.quadratic.resids <- DHARMa::simulateResiduals(fittedModel = gam.quadratic, plot = FALSE)
+
+```
+
+
+
+### Linear survival data
+   * Residual plots plotted against conspecific density
+
+
+::: {.panel-tabset}
+
+## GLM - Linear
+
+```{r}
+
+
+  # GLMER - linear
+  plotResiduals(glm.linear.noquad.sim.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+## GLM - Quadratic
+
+```{r}
+
+  # GLMER - nonlinear
+  plotResiduals(glm.linear.quad.sim.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+## GAM
+
+```{r}
+ 
+  # Gam
+  plotResiduals(gam.linear.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+::: 
+
+
+
+### Quadratic survival data
+   * Residual plots plotted against conspecific density
+
+
+::: {.panel-tabset}
+
+## GLM - Linear
+
+```{r}
+  # GLMER - linear
+  plotResiduals(glm.quadratic.noquad.sim.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+
+## GLM - Quadratic
+
+```{r}
+  # GLMER - nonlinear
+  plotResiduals(glm.quadratic.quad.sim.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+## GAM
+
+```{r}
+
+  # Gam
+  plotResiduals(gam.quadratic.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
+
+```
+
+:::
+
+##  Model comparisons with AIC and other metrics
+
+### Linear survival data
+```{r model comparisons with AIC linear, warning=FALSE}
+
+  comp <- compare_performance(glm.linear.noquad,
+                              glm.linear.quad,
+                              gam.linear)
+  knitr::kable(comp %>% arrange(desc(AICc_wt)) %>% 
+                 select(Name, Model, AICc, AICc_wt))
+  
+```  
+
+### Quadratic survival data
+```{r model comparisons with AIC quadratic, warning=FALSE}
+
+  comp <- compare_performance(glm.quadratic.noquad,
+                              glm.quadratic.quad,
+                              gam.quadratic)
+  knitr::kable(comp %>% arrange(desc(AICc_wt)) %>% 
+                 select(Name, Model, AICc, AICc_wt))
+  
+```  
+
+  
+## Model checks with 'performance' package
+* https://easystats.github.io/performance/
+
+### Linear survival data
+
+::: {.panel-tabset}
+
+### GLM - Linear
+
+```{r fig.height=12, fig.width=8}
+performance::check_model(glm.linear.noquad)
+```
+  
+### GLM - Quadratic
+  
+```{r fig.height=12, fig.width=8}
+performance::check_model(glm.linear.quad)
+```
+   
+### GAM
+   
+```{r fig.height=12, fig.width=8}
+# performance::check_model(gam.linear)
+```
+       
+:::
+
+
+### Quadratic survival data
+
+::: {.panel-tabset}
+
+### GLM - Linear
+
+```{r fig.height=12, fig.width=8}
+performance::check_model(glm.quadratic.noquad)
+```
+  
+### GLM - Quadratic
+  
+```{r fig.height=12, fig.width=8}
+performance::check_model(glm.quadratic.quad)
+```
+   
+### GAM
+   
+```{r fig.height=12, fig.width=8}
+# performance::check_model(gam.quadratic)
+```
+       
+:::
+
+
+
