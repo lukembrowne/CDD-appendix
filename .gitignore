@@ -7,3 +7,8 @@
 /_site/
 /_book/
 .DS_Store
+/code/
+/calculating-neighborhood_cache/
+/calculating-neighborhood_files/
+/docs/
+
