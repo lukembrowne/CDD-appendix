@@ -13,18 +13,23 @@ book:
   chapters:
     - index.qmd
     - intro.qmd
+    - calculating-neighborhood.qmd
     - linear_vs_nonlinear.qmd
-    - summary.qmd
     - references.qmd
     
 comments:
-  hypothesis: true
+  hypothesis: false
 
 bibliography: references.bib
 
 format:
   html:
     theme: cosmo
+    code-fold: show
+    code-overflow: scroll
+    code-tools: true
+    code-copy: true
+
   pdf:
     documentclass: scrreprt
 
