@@ -1,0 +1,233 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+execute: 
+  cache: true
+---
+
+# calculating-marginal-effects
+
+## Overview
+
+::: callout-note
+The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
+:::
+
+## Load libraries
+
+```{r, message=FALSE}
+
+# Load libraries
+library(readr)
+library(skimr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(parallel)
+library(pbapply) # Adds progress bar to apply functions
+library(here)
+library(spatstat.geom)
+library(mgcv) # For fitting gams
+library(lubridate) # For calculating census intervals
+library(broom) # For processing fit models
+
+```
+
+## Load data
+
+```{r, message=FALSE}
+data_BCI <- read_csv("BCI_seedling data_30 species_2023_05_18.csv")
+skim(data_BCI)
+
+```
+
+# Visualize con_den
+is possible con_den 98?
+  
+```{r}
+  
+# Exploring data 
+
+  # visualize 
+   ggplot(data_BCI, aes(x = con_dens)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
+  labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
+  theme_bw(12)
+   
+   ## Calculate the rare species bind?  following Lisa unique values of Con_Den with seems to be  > 4
+
+data_BCI <- data_BCI %>% 
+  group_by(spp) %>% 
+  summarize(nvals = length(unique(con_dens))) %>% 
+  left_join(data_BCI, by = "spp")
+ 
+ # model has a condition for the number of census because Lisa included model even with one census but if more then census is a random factor
+ unique_cen <- data_BCI %>% group_by(spp) %>% summarize(unique_cens = length(unique(census))) # our data has > 3 census
+ 
+
+ 
+```
+
+# Fit the model 
+
+```{r, message=FALSE, warning=FALSE}
+colnames(data)
+# save census as factor
+data_BCI$census <- factor(data_BCI$census)
+data_BCI$spp <- factor(data_BCI$spp)
+data_BCI$plot <- factor(data_BCI$plot)
+data_BCI$s_height=data_BCI$height.last.census
+
+# Handling rare species
+
+nval = 4  
+
+data_BCI %>% 
+  group_by(spp) %>% 
+  summarise(max_con_dens = max(con_dens),
+            unique_con_dens = length(unique(con_dens)),
+            unique_total_dens = length(unique(total_dens)),
+            unique_height = length(unique(height.last.census))
+  ) %>% 
+  
+  # add issues
+  mutate(issue_nval = unique_con_dens < nval,                        # less than nval unique values in conspecific densities
+         # issue_range = range_con_BA < minrange,                    # range should at least be equal to minrange
+         # issue_cutoff = ndead < x | nsurv < x,                     # ndead or nsurv below cutoff
+         trymodel = !(issue_nval),    # should a species specific model be tried at all? | issue_range | issue_cutoff
+         rare = !trymodel                                          # preliminary assignment of rare species
+  ) -> nsp
+
+# we have a data frame  called nsp
+
+model_fit = function(data, speciesinfo, reduced = F) {
+  
+  # create new factor with correct factor levels per species (otherwise problem with margins)
+  data$census = factor(data$census)
+  
+  
+  # create model formula
+  term_c = ifelse(length(unique(data$census)) > 1, " + s(census, bs = 're')", "") 
+  
+  if (reduced) {
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)"
+                              , term_c))
+  } else {
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)  + s(con_dens, k = k3)"
+                              , term_c))
+  }
+  
+   # chose penalty
+  # set to default 10 (the same as -1)
+  k1 = k2 = k3 = 3
+  # if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
+  # if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
+  # if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
+  
+  
+  # fit model
+  # https://stats.stackexchange.com/questions/27586/spline-df-selection-in-a-general-additive-poisson-model-problem/71300#71300
+  mod = try(gam(form
+                , family = binomial(link=cloglog)
+                , offset = log(interval)
+                , data = data
+                # , method = "GCV.Cp" # tends to undersmooth
+                , method = "REML"
+  ) , silent = T
+  )
+  
+  return(mod)
+  
+}
+
+model_convergence = function(model) {
+  
+  # gam not available
+  if (!any(class(model)=="gam")) {
+    print(paste(spp, "gam failed"))
+  } else {
+    
+    # gam not converged
+    if (!model$converged) {
+      print(paste(spp, "no convergence"))
+    } else {
+      
+      # check for complete separation
+      # https://stats.stackexchange.com/questions/336424/issue-with-complete-separation-in-logistic-regression-in-r
+      # Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred"
+      eps <- 10 * .Machine$double.eps
+      glm0.resids <- augment(x = model) %>%
+        mutate(p = 1 / (1 + exp(-.fitted)),
+               warning = p > 1-eps,
+               influence = order(.hat, decreasing = T))
+      infl_limit = round(nrow(glm0.resids)/10, 0)
+      # check if none of the warnings is among the 10% most influential observations, than it is okay..
+      num = any(glm0.resids$warning & glm0.resids$influence < infl_limit)
+      
+      # complete separation
+      if (num) {
+        print(paste(spp, "complete separation is likely"))
+      } else {
+        
+        # missing Vc
+        if (is.null(model$Vc)) {
+          print(paste(spp, "Vc not available"))
+        } else {
+        
+        # successful model
+        return(model)
+        }
+      }
+    }
+  }
+}
+
+
+
+res_mod = list()      # main model fits
+res_red_mod = list()  # reduced model fits for Pseudo R2
+
+
+res_mod = list()      # main model fits
+res_red_mod = list()  # reduced model fits for Pseudo R2
+
+
+# Fit models for individual species
+for (spp in nsp$spp[nsp$trymodel]) {
+  
+  # select data for individual species
+  dat_sp = data[data$spp == spp, ]
+  
+  # model fit and reduced fit for Pseudo R2
+  mod = model_fit(data = dat_sp, speciesinfo = nsp[nsp$spp == spp, ])
+  mod_red = model_fit(data = dat_sp, speciesinfo = nsp[nsp$spp == spp, ], reduced = T)
+  
+  # check model success
+  res = model_convergence(model = mod)
+  res_red = model_convergence(model = mod_red)
+  
+  # save result
+  if (is.character(res)) {
+    nsp$rare[nsp$spp == spp] = T  
+  } else {
+    res_mod[[spp]] = res
+    res_red_mod[[spp]] = res_red
+  }
+}
+
+ 
+```
+
+# Extra information from Lisa repository
+```{r}
+#Fit only one specie
+## i need interval factor ###
+data_BCI_1=data_BCI[data_BCI$spp=="QUARAS",]
+mod <- gam(formula = status ~ s(s_height, k = k1) + s(total_dens, k = k2) + s(con_dens, k = k3),
+               family = binomial(link = cloglog),
+               offset = log(interval),
+               data = data_BCI_1,
+               method = "REML")
+
+```
