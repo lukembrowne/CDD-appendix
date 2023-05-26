@@ -130,7 +130,7 @@ model_fit = function(data, speciesinfo, reduced = F) {
   # https://stats.stackexchange.com/questions/27586/spline-df-selection-in-a-general-additive-poisson-model-problem/71300#71300
   mod = try(gam(form
                 , family = binomial(link=cloglog)
-                , offset = log(interval)
+                #, offset = log(interval)
                 , data = data
                 # , method = "GCV.Cp" # tends to undersmooth
                 , method = "REML"
@@ -226,7 +226,7 @@ for (spp in nsp$spp[nsp$trymodel]) {
 data_BCI_1=data_BCI[data_BCI$spp=="QUARAS",]
 mod <- gam(formula = status ~ s(s_height, k = k1) + s(total_dens, k = k2) + s(con_dens, k = k3),
                family = binomial(link = cloglog),
-               offset = log(interval),
+               #offset = log(interval),
                data = data_BCI_1,
                method = "REML")
 
