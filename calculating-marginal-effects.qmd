@@ -31,7 +31,7 @@ library(spatstat.geom)
 library(mgcv) # For fitting gams
 library(lubridate) # For calculating census intervals
 library(broom) # For processing fit models
-
+library(gratia)
 ```
 
 ## Load data
