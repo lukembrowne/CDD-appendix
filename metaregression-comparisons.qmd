@@ -1,0 +1,139 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+execute: 
+  cache: true
+---
+
+# Using metaregression to compare across sites or species
+
+## Overview
+
+In this section, we demonstrate how to ...
+
+"To test for latitudinal patterns in stabilizing CNDD, we fitted meta-regressions using the species-site-specific CNDD estimates. The advantage of these models is that they simultaneously account for the uncertainties in 𝑎𝐴𝑀𝐸 and 𝑟𝐴𝑀𝐸 estimates (i.e., sampling variances) -- much like measurement error models -- as well as heterogeneity among sites and species via a multilevel model:"
+
+" Models were fitted via restricted maximum likelihood estimation (REML) using the functions
+
+rma.mv( and rma() from the package metafor7 (Version 3.4-0) for the global and site. specific cases, respectively.
+
+-   Model diagnostics for the meta-regressions were based on standardized residuals and visual
+
+    assessments. Because of the unbalanced design (more tropical than temperate species, see
+
+TODO
+
+-   Change log abundance to real values like in Lisa's paper
+
+Questions
+
+-   Should we log transform abundance for model fitting and prediction, or should one?
+
+-   https://github.com/LisaHuelsmann/latitudinalCNDD/blob/main/code/meta_models/functions_meta_models.R
+
+-   https://github.com/LisaHuelsmann/latitudinalCNDD/blob/main/code/meta_models/source_meta_models.R
+
+::: callout-note
+The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
+:::
+
+## Load libraries and data
+
+```{r, message=FALSE}
+
+# Load libraries
+library(tidyr)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(here)
+library(metafor)
+# library(parallel)
+# library(pbapply) # Adds progress bar to apply functions
+# library(here)
+# library(spatstat.geom)
+# library(mgcv) # For fitting gams
+# library(lubridate) # For calculating census intervals
+# library(broom) # For processing fit models
+
+# Load in BCI data
+abundances <- read_csv(here("./data/BCI seedling data - 30 species - abundance 2023_05_18.csv"))
+
+
+# Load marginal effects calculations from previous section
+load(here("./data/mortality.Rdata"))
+
+# Subset down to just equilibrium change
+rAME <- rAME %>%
+  filter(change == "equilibrium")
+
+# Join abundance data
+rAME <- left_join(rAME, abundances, by = c("sp" = "spp"))
+
+# Log transform abundance
+rAME$log_abundance <- log(rAME$abundance)
+
+```
+
+Let's take a quick look at the data set we'll be working with:
+
+```{r}
+head(rAME, n = 10)
+```
+
+------------------------------------------------------------------------
+
+## Calculate effect size
+
+```{r}
+# Calculate effect size
+    dat_meta = metafor::escalc(measure = "GEN", # Set measure to generic, which passes the observed effect sizes or outcomes via the yi argument and the corresponding sampling variances via the vi argument (or the standard errors via the sei argument) to the function.
+                               yi = estimate, # observed outcomes
+                               sei = std.error, # standard errors
+                               slab = sp, # label for species
+                               data = rAME)
+      
+```
+
+## Fit metaregression models
+
+```{r}
+# Fit model
+metamod = metafor::rma(yi = yi,
+                   vi = vi,
+                   mods = ~ log_abundance,
+                   method = "REML",
+                   data = dat_meta)
+
+summary(metamod)
+```
+
+## Model Diagnostics
+
+```{r}
+plot(metamod)
+```
+
+## Model predictions
+
+```{r}
+
+# Generate a prediction dataframe
+pred <- expand_grid(log_abundance = seq(min(dat_meta$log_abundance), max(dat_meta$log_abundance),
+                                    length.out = 50))
+
+pred$abundance <- exp(pred$log_abundance)
+
+pred <- cbind(pred, predict(object = metamod, newmods = pred$log_abundance))
+
+
+# Plot prediction
+ggplot(pred, aes(x = log_abundance, y = pred)) + 
+  geom_ribbon(aes(ymin = ci.lb, ymax = ci.ub), fill = "steelblue2", alpha = 0.75) + 
+  geom_line() + 
+  geom_hline(yintercept = 0, lty = 2) + 
+  labs(x = "Log Abundance", y = "stabilizing CNDD (%)") + 
+  theme_bw(15) 
+
+```

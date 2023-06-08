@@ -39,7 +39,7 @@ library(mgcViz)
 ## Load data
 
 ```{r, message=FALSE}
-data_BCI <- read_csv("BCI_seedling data_30 species_2023_05_18.csv")
+data_BCI <- read_csv(here("./data/BCI_seedling data_30 species_2023_05_18.csv"))
 
 ```
 
@@ -226,7 +226,7 @@ for (spp in nsp$spp[nsp$trymodel]) {
 
 # Fit models for rare species - Still a work in progress (Skip)
 
-```{r, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
 
 # overview rare versus rare and no convergence
 table(rare = nsp$rare, trymodel = nsp$trymodel) # N: We have 9 species here that are considered rare
@@ -611,7 +611,7 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predi
 # plot splines in pdf -----------------------------------------------------
 
 # Set the PDF file name
-pdf_file <- "mortality.pdf"
+pdf_file <- here("./plots/mortality.pdf")
 
 # Set the PDF device to save the plot
 pdf(pdf_file)
@@ -640,14 +640,14 @@ dev.off()
 
 
 save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", "coefs", "sums") # "nsp_rare"
-     , file = paste0( "mortality.Rdata"))
-load("mortality.Rdata")
+     , file = paste0(here("./data/mortality.Rdata")))
+load(here("./data/mortality.Rdata"))
 
 ```
 
 ## Fit one species (Skip)
 
-```{r}
+```{r, eval = FALSE}
 
 #Fit only one specie
 ## interval should be the time betwen censuses in years###
