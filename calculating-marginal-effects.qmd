@@ -32,75 +32,78 @@ library(mgcv) # For fitting gams
 library(lubridate) # For calculating census intervals
 library(broom) # For processing fit models
 library(gratia)
+library(boot)
+library(mgcViz)
 ```
 
 ## Load data
 
 ```{r, message=FALSE}
 data_BCI <- read_csv("BCI_seedling data_30 species_2023_05_18.csv")
-skim(data_BCI)
 
 ```
 
-# Visualize con_den
-is possible con_den 98?
-  
+# Visualize
+
 ```{r}
   
 # Exploring data 
 
   # visualize 
-   ggplot(data_BCI, aes(x = con_dens)) +
+   skim(data_BCI)
+  ggplot(data_BCI, aes(x = con_dens)) +
   geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
   labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
   theme_bw(12)
    
-   ## Calculate the rare species bind?  following Lisa unique values of Con_Den with seems to be  > 4
-
-data_BCI <- data_BCI %>% 
-  group_by(spp) %>% 
-  summarize(nvals = length(unique(con_dens))) %>% 
-  left_join(data_BCI, by = "spp")
- 
- # model has a condition for the number of census because Lisa included model even with one census but if more then census is a random factor
- unique_cen <- data_BCI %>% group_by(spp) %>% summarize(unique_cens = length(unique(census))) # our data has > 3 census
- 
-
- 
 ```
 
-# Fit the model 
+# Handling rare species
+
+Species that have at least 4 unique Conspecific density values.
+
+comment: In Lisa's code the species that did not fulfill these criteria and those where no convergence was achieved (overall 63.2 % of the species) were fitted jointly in one of two groups -- rare shrub species and rare tree species. she also has at least 20 alive and dead status observations each criteria.
 
 ```{r, message=FALSE, warning=FALSE}
-colnames(data)
+
 # save census as factor
 data_BCI$census <- factor(data_BCI$census)
 data_BCI$spp <- factor(data_BCI$spp)
 data_BCI$plot <- factor(data_BCI$plot)
 data_BCI$s_height=data_BCI$height.last.census
+data_BCI$interval=as.numeric(data_BCI$time.since.last.census)
 
 # Handling rare species
 
-nval = 4  
+nval = 4  ## this is the number of unique conspecific values you want
 
 data_BCI %>% 
   group_by(spp) %>% 
-  summarise(max_con_dens = max(con_dens),
+  summarise(
+            # ndead = sum(surv_next==0), # no needed now but may be useful to implement as criteria
+            # nsurv = sum(surv_next==1),
+            range_con_dens = max(con_dens) - min(con_dens),
+            max_con_dens = max(con_dens),
             unique_con_dens = length(unique(con_dens)),
             unique_total_dens = length(unique(total_dens)),
             unique_height = length(unique(height.last.census))
   ) %>% 
   
   # add issues
-  mutate(issue_nval = unique_con_dens < nval,                        # less than nval unique values in conspecific densities
-         # issue_range = range_con_BA < minrange,                    # range should at least be equal to minrange
+  mutate(issue_nval = unique_con_dens < nval,                        # less than nval unique values in consp densities
+         # issue_range = range_con_dens < minrange,                    # range should at least be equal to minrange
          # issue_cutoff = ndead < x | nsurv < x,                     # ndead or nsurv below cutoff
          trymodel = !(issue_nval),    # should a species specific model be tried at all? | issue_range | issue_cutoff
          rare = !trymodel                                          # preliminary assignment of rare species
   ) -> nsp
 
-# we have a data frame  called nsp
+# we created a data frame  called "nsp"
 
+```
+
+## Function for fitting models
+
+```{r, message=FALSE, warning=FALSE}
 model_fit = function(data, speciesinfo, reduced = F) {
   
   # create new factor with correct factor levels per species (otherwise problem with margins)
@@ -120,10 +123,10 @@ model_fit = function(data, speciesinfo, reduced = F) {
   
    # chose penalty
   # set to default 10 (the same as -1)
-  k1 = k2 = k3 = 3
-  # if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
-  # if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
-  # if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
+  k1 = k2 = k3 = 10
+  if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
+  if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
+  if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
   
   
   # fit model
@@ -183,8 +186,11 @@ model_convergence = function(model) {
   }
 }
 
+```
 
+# Fit models for All (expect rare species)
 
+```{r, message=FALSE, warning=FALSE}
 res_mod = list()      # main model fits
 res_red_mod = list()  # reduced model fits for Pseudo R2
 
@@ -197,7 +203,7 @@ res_red_mod = list()  # reduced model fits for Pseudo R2
 for (spp in nsp$spp[nsp$trymodel]) {
   
   # select data for individual species
-  dat_sp = data[data$spp == spp, ]
+  dat_sp = data_BCI[data_BCI$spp == spp, ]
   
   # model fit and reduced fit for Pseudo R2
   mod = model_fit(data = dat_sp, speciesinfo = nsp[nsp$spp == spp, ])
@@ -216,18 +222,454 @@ for (spp in nsp$spp[nsp$trymodel]) {
   }
 }
 
- 
 ```
 
-# Extra information from Lisa repository
+# Fit models for rare species - Still a work in progress (Skip)
+
+```{r, message=FALSE, warning=FALSE}
+
+# overview rare versus rare and no convergence
+table(rare = nsp$rare, trymodel = nsp$trymodel) # N: We have 9 species here that are considered rare
+
+# make Rare dependent on stature - N: as Shrub or trees 
+stature <- data.frame(spp = unique(data_BCI$spp), stature = "seedling") # we added this for seedlings but is about size
+## for seedlings we should just name all of then species rare_seelings and add to the analyses.
+
+nsp$stature = stature$stature[match(nsp$spp, stature$sp)]
+nsp$rare_stature = NA
+nsp$rare_stature[nsp$rare] = paste0("Rare_", nsp$stature[nsp$rare])
+
+
+# explore available data per rare species group
+data_BCI %>% 
+  mutate(spp = nsp$rare_stature[match(spp, nsp$spp)]) %>% 
+  filter(!is.na(spp)) %>% 
+  group_by(spp) %>% 
+  summarise(
+            # ndead = sum(surv_next==0),
+            # nsurv = sum(surv_next==1),
+            range_con_dens = max(con_dens) - min(con_dens),
+            max_con_dens = max(con_dens),
+            unique_con_dens = length(unique(con_dens)),
+            unique_total_dens = length(unique(total_dens)),
+            unique_height = length(unique(height.last.census))
+  ) %>% 
+  
+  # add issues
+  mutate(issue_nval = unique_con_dens < nval,                            # less than nval unique values in conspecific densities
+         # issue_range = range_con_dens < minrange,                         # range should at least be equal to minrange
+         # issue_cutoff = ndead < x | nsurv < x,                          # ndead or nsurv below cutoff
+         trymodel = !(issue_nval ),         # should a group specific model be tried at all?
+  ) -> nsp_rare
+
+
+
+---
+
+# Fit models for species groups
+for (spp in unique(nsp_rare$spp[nsp_rare$trymodel])) {
+  
+  # select data for all species in group
+  sps = nsp$spp[which(nsp$rare_stature == spp)]
+  dat_spp = data_BCI[data_BCI$spp %in% sps, ]
+  
+  # model fit
+  mod = model_fit(data = dat_spp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ])
+  mod_red = model_fit(data = dat_spp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ], reduced = T)  
+  
+  # check model success
+  res = model_convergence(model = mod)
+  res_red = model_convergence(model = mod_red)
+  
+  # save result
+  if (!is.character(res)) {
+    res_mod[[sp]] = res
+    res_red_mod[[sp]] = res_red
+  }
+}
+
+
+```
+
+# Regression table via broom::tidy() --------------------------------------
+
 ```{r}
+coefs = lapply(res_mod, broom::tidy)
+coefs = Map(cbind, coefs, sp = names(coefs))
+coefs = do.call(rbind, coefs)
+
+```
+
+# Model summary via broom::glance()
+
+```{r}
+# df logLik AIC BIC deviance df.residuals nobs 
+sums = lapply(res_mod, broom::glance)
+sums = Map(cbind, sums, sp = names(sums))
+sums = do.call(rbind, sums)
+
+
+# AUC
+aucs = lapply(res_mod, function(x) {
+  roc <- performance::performance_roc(x, new_data = x$model)
+  bayestestR::area_under_curve(roc$Spec, roc$Sens)
+})
+sums$AUC = unlist(aucs)
+
+
+# Pseudo R2
+sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) / unlist(lapply(res_red_mod, function(x) x$deviance)))
+```
+
+## AMEs absolute and Relative
+
+AMEs relative are used to compare in meta-analyses while absolute AMEs are reported as they are commonly used in other studies.
+
+We have will get here a file named res_model that have all the results and coefficients
+
+## Function to calculte AMEs without the "gratia" package
+
+```{r}
+library(MASS)
+
+
+# Useful functions --------------------------------------------------------
+
+
+# set step on x for numerical derivative
+setstep = function(x) {
+  eps = .Machine$double.eps
+  x + (max(abs(x), 1, na.rm = TRUE) * sqrt(eps)) - x
+}
+
+
+
+# Average marginal effects ------------------------------------------------
+
+get_AME = function(mod, data, term
+                   , change = NULL
+                   , at = NULL
+                   , offset = 1
+                   , relative = F
+                   , iterations = 1000
+                   , seed = 10
+                   , samples = F) {
+  
+  # Two data frames with shift in term of interest:
+  d0 = d1 = data
+  
+  # if change is NULL, use numerical derivative
+  if (is.null(change)) {
+    
+    d0[[term]] = d0[[term]] - setstep(d0[[term]])
+    d1[[term]] = d1[[term]] + setstep(d1[[term]])
+    
+  } 
+  
+  # if change includes "+", use explicit additive change
+  if (grepl("\\+", paste(change, collapse = "_"))) {
+    
+    d1[[term]] = d1[[term]] + as.numeric(gsub("\\+", "", change))
+    
+  } 
+  
+  # if change has two values, use explicit change
+  if (length(change) == 2) {
+    
+    d0[[term]] = as.numeric(change[1])
+    d1[[term]] = as.numeric(change[2])
+    
+  }
+  
+  # Fix at values:
+  if (!is.null(at)) {
+    for (i in names(at))
+      d0[[i]] = at[[i]]
+      d1[[i]] = at[[i]]
+  }
+  
+  # Matrices for prediction, map coefs to fitted curves
+  Xp0 <- predict(mod, newdata = d0, type="lpmatrix")
+  Xp1 <- predict(mod, newdata = d1, type="lpmatrix")
+  
+  # Model settings
+  ilink <- family(mod)$linkinv
+  beta <- coef(mod)
+  # vc <- mod$Vp # Bayesian
+  vc <- mod$Vc # Bayesian accounting for smoothing parameter uncertainty
+  
+
+  # marginal effects
+  pred0   <- 1 - (1-ilink(Xp0 %*% beta))^offset
+  pred1   <- 1 - (1-ilink(Xp1 %*% beta))^offset
+  ME <- (pred1-pred0)
+  
+  # if change is NULL, use numerical derivative
+  if (is.null(change)) {
+    ME <- ME/(d1[[term]] - d0[[term]])
+  } 
+
+  
+  # convert to relative if requested
+  if (relative == T) ME = ME/pred0
+  
+  # # Alternative for relative:
+  # ME1 = ME/pred0; ME2 = ME/mean(pred0)
+  # plot(ME, ME2)
+  # points(ME, ME1, col = 2)
+  # par(mfrow = c(1, 2))
+  # hist(ME1); hist(ME2)
+  # par(mfrow = c(1, 1))
+  
+  # average marginal effect
+  AME = mean(ME)
+  
+  
+  # generate AME samples
+  
+  # variance of average marginal effect via "posterior" simulation
+  # simulate from multivariate normal using model beta means and covariance matrix
+  if (!is.null(seed)) set.seed(seed)
+  coefmat = mvrnorm(n = iterations
+                    , mu = beta
+                    , Sigma = vc)
+  
+  # estimate AME from each simulated coefficient vector
+  AMEs = apply(coefmat, 1, function(coefrow) {
+    
+    # marginal effects
+    pred0   <- 1 - (1-ilink(Xp0 %*% coefrow))^offset
+    pred1   <- 1 - (1-ilink(Xp1 %*% coefrow))^offset
+    ME <- (pred1-pred0)
+    
+    # if change is NULL, use numerical derivative
+    if (is.null(change)) {
+      ME <- ME/(d1[[term]] - d0[[term]])
+    } 
+    
+    # convert to relative if requested
+    if (relative == T) ME = ME/pred0
+    
+    # average marginal effect
+    AME = mean(ME)
+    return(AME)
+  })
+  
+  # Combine results
+  if (!samples) {
+    res = data.frame(term
+                     , estimate = AME
+                     , std.error = sqrt(var(AMEs))  # not a good idea
+                     , estimate.sim = mean(AMEs)    # not a good idea
+                     , offset
+                     , change.value = paste(change, collapse = "_"))
+    return(res) 
+    
+  } else {
+    
+    res_sums = data.frame(term
+                     , estimate = AME
+                     , std.error = sqrt(var(AMEs)) # not a good idea
+                     , offset
+                     , change.value = paste(change, collapse = "_"))
+    
+    res_samples = data.frame(term
+                             , estimate = AMEs
+                             , MLE = AME
+                             , offset
+                             , change.value = paste(change, collapse = "_"))
+    res = list(res_sums, res_samples)
+    return(res)  
+    
+  }
+}
+
+
+
+```
+
+## Settings for AMEs
+
+Need to solve the value of additive is it 1?
+
+```{r}
+
+#### chose predictors for local density
+  
+predictors <- c(con_dens = "con_dens", 
+                total_dens = "total_dens")
+
+# change in conspecific density for AME calculations----
+additive=1 # is 1 ? in the tree analyses was pi*((dbh_neighbor/1000)/2)^2 *  
+#additive = pi*((dbh_neighbor/1000)/2)^2 *         # basal area (m2) of one more neighbor with dbh_neighbor
+  # dec_fun(decay_con, dist_neighbor, decay_type)   # at a distance of dist_neighbor  
+
+  
+# fixed value for interval (offset)
+# different change settings for conspecific densities
+# averaged over all other predictors (total density, dbh...)
+
+interval = 1
+change = list(equilibrium = data.frame(con_dens = "paste('+', additive)")
+              , invasion = data.frame(con_dens = "c(0, additive)")
+              , iqr = data.frame(con_dens = "c(q1, q3)")
+              )
+iter = 500
+
+```
+
+# calculating AMEs
+
+## Absolute AMEs values
+
+```{r}
+# Absolute AMEs -----------------------------------------------------------
+
+# Calculate absolute AMEs based on manual function get_AME
+AME = data.frame()
+AMEsamples = data.frame()
+for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predictors
+  for (j in names(change)) {
+    temp = lapply(res_mod, function(x){
+      if (j == "iqr") {
+        q1 = quantile(x$model$con_dens, probs = 0.25)
+        q3 = quantile(x$model$con_dens, probs = 0.75)
+      }
+      get_AME(x
+              , data = x$model
+              , offset = interval
+              , term = i
+              , change = eval(parse(text = change[[j]][,i]))
+              , iterations = iter
+              , samples = T
+      )
+    }
+    )
+    
+    # AME
+    tempAME = lapply(temp, function(x) x[[1]])
+    tempAME = Map(cbind, tempAME, change = j, sp = names(tempAME))
+    tempAME = do.call(rbind, tempAME)
+    AME = rbind(AME, tempAME)
+    
+    # AME samples
+    tempSamples = lapply(temp, function(x) x[[2]])
+    tempSamples = Map(cbind, tempSamples, change = j, sp = names(tempSamples), iter = iter)
+    tempSamples = do.call(rbind, tempSamples)
+    AMEsamples = rbind(AMEsamples, tempSamples)
+  }
+}
+```
+
+## Relative AMEs values
+
+```{r}
+# Relative AMEs -----------------------------------------------------------
+
+
+# Calculate relative AMEs based on manual function get_AME
+rAME = data.frame()
+rAMEsamples = data.frame()
+for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predictors
+  for (j in names(change)) {
+    temp = lapply(res_mod, function(x){
+      if (j == "iqr") {
+        q1 = quantile(x$model$con_dens, probs = 0.25)
+        q3 = quantile(x$model$con_dens, probs = 0.75)
+      }
+      get_AME(x
+              , data = x$model
+              , offset = interval
+              , term = i
+              , change = eval(parse(text = change[[j]][, i]))
+              , iterations = iter
+              , relative = T
+              , samples = T
+      )
+    }
+    )
+    
+    # rAME
+    tempAME = lapply(temp, function(x) x[[1]])
+    tempAME = Map(cbind, tempAME, change = j, sp = names(tempAME))
+    tempAME = do.call(rbind, tempAME)
+    rAME = rbind(rAME, tempAME)
+    
+    # rAME samples
+    tempSamples = lapply(temp, function(x) x[[2]])
+    tempSamples = Map(cbind, tempSamples, change = j, sp = names(tempSamples), iter = iter)
+    tempSamples = do.call(rbind, tempSamples)
+    rAMEsamples = rbind(rAMEsamples, tempSamples)
+  }
+}
+
+```
+
+# Plotting and saving results
+
+```{r}
+# plot splines in pdf -----------------------------------------------------
+
+# Set the PDF file name
+pdf_file <- "mortality.pdf"
+
+# Set the PDF device to save the plot
+pdf(pdf_file)
+
+
+for (i in 1:length(res_mod))  {
+  
+  # with mgcv
+  # plot(res_mod[[i]], pages = 1, scale = 0, main = names(res_mod)[i], all.terms = T) 
+  
+  # with gamViz
+  vizmod <- getViz(res_mod[[i]], post = T, unconditional = T)
+  pl = plot(vizmod, nsim = 20, allTerms = T) + 
+    l_ciLine() + l_fitLine() + l_simLine() + 
+    l_ciBar() + l_fitPoints(size = 1) + 
+    l_rug() + 
+    # l_points() +
+    labs(title = names(res_mod)[i]) 
+  print(pl, pages = 1)
+  
+}
+dev.off()
+
+
+# Save results ------------------------------------------------------------
+
+
+save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", "coefs", "sums") # "nsp_rare"
+     , file = paste0( "mortality.Rdata"))
+load("mortality.Rdata")
+
+```
+
+## Fit one species (Skip)
+
+```{r}
+
 #Fit only one specie
-## i need interval factor ###
+## interval should be the time betwen censuses in years###
 data_BCI_1=data_BCI[data_BCI$spp=="QUARAS",]
 mod <- gam(formula = status ~ s(s_height, k = k1) + s(total_dens, k = k2) + s(con_dens, k = k3),
                family = binomial(link = cloglog),
                offset = log(interval),
                data = data_BCI_1,
                method = "REML")
+
+y_d <- response_derivatives(mod, data = data_BCI_1, type = "central",
+                            focal = "con_dens", eps = 0.01, seed = 21)
+derivative_values <- y_d$derivative
+mean_derivative <- mean(derivative_values)
+#also calculate CI
+
+# draw response derivatives
+p2 <- y_d |>
+    ggplot(aes(x = con_dens, y = derivative)) +
+    geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2) +
+    geom_line() +
+    labs(title = "Estimated 1st derivative of estimated count",
+         y = "First derivative")
 
 ```
