@@ -2,7 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-
 /.quarto/
 /_site/
 /_book/
@@ -11,4 +10,7 @@
 /calculating-neighborhood_cache/
 /calculating-neighborhood_files/
 /docs/
-
+calculating-marginal-effects_cache
+calculating-marginal-effects_files
+metaregression-comparisons_cache
+metaregression-comparisons_files
