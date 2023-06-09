@@ -6,33 +6,19 @@ execute:
   cache: true
 ---
 
-# Using metaregression to compare across sites or species
+# Using meta-regressions to compare NCDD across species or sites
 
 ## Overview
 
-In this section, we demonstrate how to ...
+In this section, we demonstrate one approach to comparing the strength of NCDD across species using a meta-analysis framework. The same approach can be used to compare NCDD across sites, plots, or any other unit of interest, as long as it is possible to generate reliable estimates of the strength of NCDD (suitable sample sizes, etc).
 
-"To test for latitudinal patterns in stabilizing CNDD, we fitted meta-regressions using the species-site-specific CNDD estimates. The advantage of these models is that they simultaneously account for the uncertainties in 𝑎𝐴𝑀𝐸 and 𝑟𝐴𝑀𝐸 estimates (i.e., sampling variances) -- much like measurement error models -- as well as heterogeneity among sites and species via a multilevel model:"
+We use a subset of the BCI seedling data of only 30 species to compare how species abundance is related to the strength of NCDD at the species level. This analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
 
-" Models were fitted via restricted maximum likelihood estimation (REML) using the functions
+An advantage of using meta-regressions is that the models are able to account for the uncertainties in the estimates of the strength of NCDD as well as heterogeneity among factors like sites and species through the inclusion of random effects.
 
-rma.mv( and rma() from the package metafor7 (Version 3.4-0) for the global and site. specific cases, respectively.
+In this tutorial, we use 𝑟𝐴𝑀𝐸 (relatively average marginal effect) calculated in the previous chapter as our response variable, calculated separately for each species. 𝑟𝐴𝑀𝐸 estimates the relative increase in the probability of annual mortality with the addition of one new conspecific neighbor, while keeping total densities constant. Positive numbers indicate a relative increase in mortality with an increase in conspecific density, indicating the presence of NCDD. In principle, any metric of the strength of CDD can be used, though care must be taken to ensure that the metrics are comparable across species and sites (see main text for more information).
 
--   Model diagnostics for the meta-regressions were based on standardized residuals and visual
-
-    assessments. Because of the unbalanced design (more tropical than temperate species, see
-
-TODO
-
--   Change log abundance to real values like in Lisa's paper
-
-Questions
-
--   Should we log transform abundance for model fitting and prediction, or should one?
-
--   https://github.com/LisaHuelsmann/latitudinalCNDD/blob/main/code/meta_models/functions_meta_models.R
-
--   https://github.com/LisaHuelsmann/latitudinalCNDD/blob/main/code/meta_models/source_meta_models.R
+We use the popular [metafor package](https://www.metafor-project.org/doku.php/metafor) to fit the meta-regression models.
 
 ::: callout-note
 The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
@@ -49,17 +35,9 @@ library(readr)
 library(ggplot2)
 library(here)
 library(metafor)
-# library(parallel)
-# library(pbapply) # Adds progress bar to apply functions
-# library(here)
-# library(spatstat.geom)
-# library(mgcv) # For fitting gams
-# library(lubridate) # For calculating census intervals
-# library(broom) # For processing fit models
 
-# Load in BCI data
+# Load in species abundances for BCI data subset
 abundances <- read_csv(here("./data/BCI seedling data - 30 species - abundance 2023_05_18.csv"))
-
 
 # Load marginal effects calculations from previous section
 load(here("./data/mortality.Rdata"))
@@ -68,13 +46,15 @@ load(here("./data/mortality.Rdata"))
 rAME <- rAME %>%
   filter(change == "equilibrium")
 
-# Join abundance data
+# Join marginal effects and abundance data
 rAME <- left_join(rAME, abundances, by = c("sp" = "spp"))
 
-# Log transform abundance
+# Log transform abundance to use in models
 rAME$log_abundance <- log(rAME$abundance)
 
 ```
+
+------------------------------------------------------------------------
 
 Let's take a quick look at the data set we'll be working with:
 
@@ -84,10 +64,12 @@ head(rAME, n = 10)
 
 ------------------------------------------------------------------------
 
-## Calculate effect size
+## Reformat data for model fitting
+
+First, we use the 'escalc' function in the metafor package to essentially repackage our data frame into a format used in the meta-regression model fitting. Since we already calculated our effect size (𝑟𝐴𝑀𝐸), we just pass through the 𝑟𝐴𝑀𝐸 estimate and corresponding standard error using the 'GEN' option for the 'measure' argument, rather than calculating an effect size within the 'escalc' function.
 
 ```{r}
-# Calculate effect size
+# Reformat data for model fitting
     dat_meta = metafor::escalc(measure = "GEN", # Set measure to generic, which passes the observed effect sizes or outcomes via the yi argument and the corresponding sampling variances via the vi argument (or the standard errors via the sei argument) to the function.
                                yi = estimate, # observed outcomes
                                sei = std.error, # standard errors
@@ -96,44 +78,73 @@ head(rAME, n = 10)
       
 ```
 
-## Fit metaregression models
+------------------------------------------------------------------------
+
+## Fit meta-regression model
+
+Next, we use the 'rma' function to fit a meta-regression model, where 𝑟𝐴𝑀𝐸 is our response variable (renamed as yi in the previous step) and log species abundance is our predictor. While not shown here, it is possible to fit mixed effects meta-regression models with the 'rma.mv' function. We suggest consulting the [extensive documentation for the metafor package](https://www.metafor-project.org/doku.php/metafor) for further details.
 
 ```{r}
 # Fit model
 metamod = metafor::rma(yi = yi,
-                   vi = vi,
-                   mods = ~ log_abundance,
-                   method = "REML",
-                   data = dat_meta)
+                       vi = vi,
+                       mods = ~ log_abundance,
+                       method = "REML",
+                       data = dat_meta)
+```
 
+## Print model summary
+
+```{r}
 summary(metamod)
+```
+
+## Plot Forest plot
+
+In this case, a forest plot shows the estimates of NCDD for individual species, here ordered by least to most abundant going from top to bottom.
+
+```{r, fig.height = 8}
+forest(metamod, 
+       header = "Species", 
+       xlab = "rAME",
+       order = log_abundance)
 ```
 
 ## Model Diagnostics
 
-```{r}
+The plot method displays some model diagnostics, in addition to a forest plot.
+
+```{r, fig.height = 10, fig.width = 8}
 plot(metamod)
 ```
 
 ## Model predictions
 
+Here, we generate predictions and corresponding confidence intervals for how species abundance is related to strength of NCDD using the 'predict' function.
+
 ```{r}
 
 # Generate a prediction dataframe
-pred <- expand_grid(log_abundance = seq(min(dat_meta$log_abundance), max(dat_meta$log_abundance),
-                                    length.out = 50))
+pred <- expand_grid(log_abundance = seq(min(dat_meta$log_abundance), 
+                                        max(dat_meta$log_abundance),
+                                        length.out = 50))
 
-pred$abundance <- exp(pred$log_abundance)
+pred$abundance <- exp(pred$log_abundance) # Back transform abundance
 
+# Bind predictions to dataframe
 pred <- cbind(pred, predict(object = metamod, newmods = pred$log_abundance))
 
+# Set abundance values for x axis
+abundances_x_axis <- c(25, 50, 100, 1000, 5000)
 
 # Plot prediction
 ggplot(pred, aes(x = log_abundance, y = pred)) + 
   geom_ribbon(aes(ymin = ci.lb, ymax = ci.ub), fill = "steelblue2", alpha = 0.75) + 
   geom_line() + 
   geom_hline(yintercept = 0, lty = 2) + 
-  labs(x = "Log Abundance", y = "stabilizing CNDD (%)") + 
+  labs(x = "Species Abundance", y = "rAME") + 
+  scale_x_continuous(breaks = log(abundances_x_axis),
+                     labels = abundances_x_axis) + 
   theme_bw(15) 
 
 ```
