@@ -1,38 +1,16 @@
-# Linear vs. non-linear
+# Using linear vs. non-linear models
 
-# Problem statement
- * Why does it matter? Detto shows that it can cause bias with rare species
- * Table with pros and cons - there will not be one solution for modeling non linearities
- * Many options in R for doing non-linearities, but don't want to showing code for all possible options
-   * if you want to fit parameteric models, bayesian is a good approach
-   * without random effects, nlme could work
- 
+## Introduction
 
-# Notes
- * Florian recommendation - because of potential bias in missing non-linearities, maybe should start with a flexible model like GAM and then only if you're sure it's non-linear
-   * As shown in detto paper with linking to abundance of species, but also across sites that vary in abundance
- * but maybe overfits with low data
- * would you be on average closer to the truth going with a glmer than a gam?
- * maybe quadratic isn't the best
-* if just interested in slope, just use glme4
-* but interested in comparison, use something flexible
-* should we just use gams?
-  * would you have to run it separately for each species all the time?
-  * in gams, can't have species specific responses, can have different slopes but not nodes
-  * a full blown simulation study would be useful to develop these recommendations, but maybe out of the scope of the appendix - but shoudl we do this befoer we even develop these recommendations?
-  * p value in mgcv is for evidence of nonlinearity
-  * can't estimate amount of wiggliness for each species, only as a fixed effect
-  * cannot provide a recommendation that would fit for everyone
-  * tradeoffs - gams are useful and adaptive, difficult to get random slopes, 
-  * pragmatic reasons for using a gam, but is problematic in linking it to theory,
-    * should not extrapolate from a gam, but can from parametric linear model - makes restrictive assumptions about functional form and can be a pain to fit
-    * if integrating into an IBM or smoething, then would need a parametric approach to extrapolate at densities not observed in the data
-    * but for hypothesis testing, semi-parametric approaches might be ok
-  * statisticians say should not fit more than 10 knots
-  * Point by Robi - spatial autocorrelation and assumption of indepdendent residuals might make GAMs really sensitive to clustering effects - like a clump of 5 seedlings getting hit by a treefall and really impacting the smoothing term if each is counted as indepdent - might be helped if including random effects in the gam?
-    
-# Setup
+Here, we demonstrate the use of non-linear models, specifically generalized additive models, or GAMs, as implemented in the [mgcv](https://cran.r-project.org/web/packages/mgcv/index.html) R package, to model conspecific density dependence. The primary reason to use non-linear rather than a linear models when estimate density dependence is that if non-linearities are missed, this could introduce potential biases into the results, especially when making comparisons across sites, species, etc.
 
+An advantage of GAMs, which are the primary modeling method used in this appendix, is that they are flexible, relatively easy to work with and to fit to data, and are able to capture both linear and non-linear patterns in the data. However, there is uncertainty about the amount of data needed to properly estimate the model and the number of knots that should be estimated. Also extreme care must be taken when extrapolating beyond the observed data.
+
+Below, we first develop a simulated data set of seedling density dependence where we know the 'truth'\-- aka the parameter values determining the survival and mortality of seedlings within the data set. For the same set of seedlings, we simulate 'linear survival', where survival is a linear function of conspecific density and other random factors (e.g., species, plot, etc.). We also simulate 'nonlinear survival', where survival is a quadratic function of conspecific density and other random factors.
+
+We then fit a series of models: 1) standard generalized linear mixed effects model (GLMER), 2) a GLMER with a quadratic term to capture non-linear effects, and 3) a GAM. We compare the models to the known 'truth' to evaluate which model might perform best under different forms of survival.
+
+## Load packages
 
 ```{r message=FALSE, warning=FALSE}
 
@@ -68,9 +46,11 @@
   cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
   
 
-  
-  
 ```
+
+## Set sample sizes and parameter values
+
+Here, we set the sample sizes and parameter values for the simulated data, determining what is the 'truth'
 
 ```{r Setting sample sizes and parameters, message=FALSE}
 
@@ -91,16 +71,16 @@
   sigma_plot        <-  .25
   sigma_noise       <-  .10 # Residual noise - increasing this adds more noise to the data
   
-# Set strength of NDD effects   
+# Set strength of NDD effects on logit scale  
   beta_NDD <- -1.0 # Community-wide non-linear NDD effects  
   beta_NDD2 <- -0.4 # Quadratic term for non-linear NDD effects
   
 
-``` 
+```
 
+## Simulate variation in seedling densities across plots
 
-## Create dataset and variation in densities across plots
-* We start with a maximum dataset with 'max_ind_per_plot' individuals per species at each plot and then subset it down later to create variation in densities across plots
+We start with a maximum data set with 'max_ind_per_plot' individuals per species at each plot and then subset this maximal data set later to create variation in densities across plots
 
 ```{r Initializing dataset, message=FALSE}
 
@@ -156,9 +136,8 @@
  # Take a look at the data set
  dat.sim
  
- # Print out stats
-   # Dataset stats -----------------------------------------------------------
-  
+ # Print out stats about simulated data set
+
   cat("Final # observations in dataset: ", nrow(dat.sim), " ...
       Final # individuals in dataset: ", length(table(dat.sim$id)), " ...
       Final # species in dataset: ", length(table(dat.sim$spp)), " ...
@@ -166,9 +145,7 @@
       Final # sites in dataset: ", length(table(dat.sim$site)), " ...
       Final # censuses in dataset: ", length(table(dat.sim$census)), " ...")
 
-``` 
-
-
+```
 
 ## Calculate conspecific density at each plot
 
@@ -185,7 +162,7 @@ dat.sim <- dat.sim %>%
 dat.sim$con_dens_scaled <- scale(dat.sim$con_dens)[, 1]
 
 
-# Plot histogram of densities
+# Plot histogram of conspecific densities
 ggplot(dat.sim, aes(x = con_dens)) +
   geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
   labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
@@ -193,9 +170,9 @@ ggplot(dat.sim, aes(x = con_dens)) +
 
 ```
 
+## Plot effect of NCDD on survival
 
-
-## Plot effect of NDD on survival
+The red line shows survival plotted as a linear function of conspecific density, while the blue line shows survival as a non-linear, quadratic function of conspecific density.
 
 ```{r Simulate effect of internannual variation in NDD on survival}
 
@@ -209,22 +186,17 @@ ggplot(dat.sim, aes(x = con_dens)) +
   p = ggplot(dat.sim, aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect + con_dens_scaled^2 * NDD2.effect)) + 
       geom_line(col = "steelblue2", lwd = 2) +
       geom_line(aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect), col = "red", lwd = 2) +
-      labs(x = "Conspecific density (scaled)", y = "Marginal effect on survival (logit scale)", title = "Effect of NDD on survival") + 
+      labs(x = "Conspecific density (scaled)", y = "Marginal effect on survival (logit scale)", title = "Effect of NDD on survival") +
       theme_bw()
   
   p
   
 ```
 
-
-
-
 ## Simulating random intercepts
-  * Species
-  * Census
-  * Plots
-  * Sites
-  
+
+Here, we simulate random effects for species, census, plots, and sites
+
 ```{r Simulating species-level intercepts, message=FALSE}
  # Generate species intercepts 
   dat.sim <- dat.sim %>% 
@@ -266,13 +238,18 @@ if(n_sites == 1){
 ```
 
 ## Simulate residual noise
+
+We add some residual noise to the data to simulate the fact that it is very unlikely that we have perfect knowledge of all the factors generating our response variable in a real data set.
+
 ```{r Simulate residual noise}
   dat.sim$noise <- rnorm(nrow(dat.sim), mean = 0, sd = sigma_noise)
 
 ```
 
+## Calculate survival probability based on parameters above
 
-## Simulate survival probability based on parameters above
+Based on the parameters set above, we calculate the probability of survival using both the linear and quadratic form. So far each seedling, there are two separate survival probabilities - one based on survival being a linear function of NCDD and one based on survival being a non-linear, quadratic function of NCDD.
+
 ```{r Simulate survival probability based on parameters above, message=FALSE}
 
 # First calculate effect on logit scale
@@ -298,9 +275,10 @@ if(n_sites == 1){
 
 ```
 
+## Determine survival status
 
-## Finally, determine if each seedling is observed alive or dead for each census
-* Draw from a binomial distribution where 1 = alive, 0 = dead, based on survival probability 
+To determine whether each seedling lived or died across the census interval, we draw from a binomial distribution where 1 = alive, 0 = dead, based on the calculated survival probability
+
 ```{r Determining if seedling is alive or dead}
 # Determine if alive or dead
   dead.sim.linear <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
@@ -315,23 +293,24 @@ if(n_sites == 1){
 
 
   # Summary stats - number of alive and dead
-
   cat("Survival rate (linear): ", round(sum(dat.sim$status.linear == 1)/nrow(dat.sim), 2)*100, "%")
   cat("Survival rate (quadratic): ", round(sum(dat.sim$status.quadratic == 1)/nrow(dat.sim), 2)*100, "%")
 
 ```
- 
 
-# Fit models to linear survival data
+## Fit models to linear survival data
 
-* Here, we will fit a set of 3 models 
-  * glm.noquad = GLMER with no quadratic term for NDD
-  * glm.quad = GLMER with a quadratic term
-  * gam.fit = GAM with smoothing term for NDD
+Here, we will fit a set of 3 models to both the linear survival data
 
-::: {.panel-tabset}
+-   glm.noquad = GLMER with no quadratic term for NDD
+-   glm.quad = GLMER with a quadratic term
+-   gam.fit = GAM with a smoothing term for NDD
 
+The results of the model summaries are shown in the tabs below.
+
+::: panel-tabset
 ## GLM - Linear
+
 ```{r}
 
 # Fit to linear survival data
@@ -345,6 +324,7 @@ summary(glm.linear.noquad)
 ```
 
 ## GLM - Quadratic
+
 ```{r}
 glm.linear.quad <- glmer(status.linear ~ con_dens_scaled + I(con_dens_scaled^2) + (1 | spp) + (1 | plot) + (1 | census),
              family = binomial(link = "logit"),
@@ -356,6 +336,7 @@ summary(glm.linear.quad)
 ```
 
 ## GAM
+
 ```{r}
  # Need to convert random effects to factors first or will get error when fitting model
 dat.sim$spp <- factor(dat.sim$spp)
@@ -374,14 +355,13 @@ gam.linear <- gam(status.linear ~
 
 summary(gam.linear)
 ```
-
 :::
 
+## Fit models to quadratic survival data
 
-# Fit models to quadratic survival data
+Here, we fit the same 3 model forms to the quadratic survival data
 
-::: {.panel-tabset}
-
+::: panel-tabset
 ## GLM - Linear
 
 ```{r}
@@ -423,19 +403,15 @@ gam.quadratic <- gam(status.quadratic ~
 
 summary(gam.quadratic)
 ```
-
 :::
 
-# Compare models
+## Plotting predicted in survival probability
 
+For each fit model, we plot the predicted change in survival probability based on changes in conspecific density. We also plot the known 'truth' based on the simulation parameters.
 
-
-## Plotting predicted community-wide change in survival probability  
-
-::: {.panel-tabset}
-
-
+::: panel-tabset
 ### Linear survival data
+
 ```{r plot surv prob}
  # Generate prediction dataframe
   pred <- expand_grid(con_dens_scaled = dat.sim$con_dens_scaled,
@@ -470,9 +446,10 @@ summary(gam.quadratic)
     labs(x = "con_dens_scaled", y = "Predicted survival probability", title = "Survival probabilty by conspecific density - community wide") +
     theme_bw(12)
   
-```  
+```
 
 ### Quadratic survival data
+
 ```{r plot surv prob quadratic}
  # Generate prediction dataframe
   pred <- expand_grid(con_dens_scaled = dat.sim$con_dens_scaled,
@@ -508,18 +485,14 @@ summary(gam.quadratic)
     labs(x = "con_dens_scaled", y = "Predicted survival probability", title = "Survival probabilty by conspecific density - community wide") +
     theme_bw(12)
   
-```  
-
+```
 :::
 
+## Model diagnostics 
 
+Here, we run some model diagnostics using the ['DHARMa' package](https://florianhartig.github.io/DHARMa/), which 'uses a simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models.' We can use these diagnostics to identify any model mispecifications.
 
-## Model diagnostics with DHARMa
-* "The ‘DHARMa’ package uses a simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models."
-
-```{r}
-
-#| warning: false
+```{r, warning=FALSE, message=FALSE}
 
 ## Plotting residuals vs. covariates using DHARMa
 
@@ -537,14 +510,11 @@ summary(gam.quadratic)
 
 ```
 
-
-
 ### Linear survival data
-   * Residual plots plotted against conspecific density
 
+Here, we show plots for residuals plotted against conspecific density. We see no issues in the residuals with the linear survival data, as expected.
 
-::: {.panel-tabset}
-
+::: panel-tabset
 ## GLM - Linear
 
 ```{r}
@@ -572,17 +542,13 @@ summary(gam.quadratic)
   plotResiduals(gam.linear.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
 
 ```
-
-::: 
-
-
+:::
 
 ### Quadratic survival data
-   * Residual plots plotted against conspecific density
 
+When we create residual plots plotted against conspecific density for the quadratic survival data, we see that the linear GLM has issues with residuals, while the quadratic GLM and GAM do not have issues.
 
-::: {.panel-tabset}
-
+::: panel-tabset
 ## GLM - Linear
 
 ```{r}
@@ -590,7 +556,6 @@ summary(gam.quadratic)
   plotResiduals(glm.quadratic.noquad.sim.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
 
 ```
-
 
 ## GLM - Quadratic
 
@@ -608,12 +573,14 @@ summary(gam.quadratic)
   plotResiduals(gam.quadratic.resids, form = dat.sim$con_dens_scaled, quantreg = TRUE)
 
 ```
-
 :::
 
-##  Model comparisons with AIC and other metrics
+## Model comparisons with AIC and other metrics
+
+Using AIC scores, we see that the GAM models consistently outperform the GLMER models for both the linear and quadratic survival data.
 
 ### Linear survival data
+
 ```{r model comparisons with AIC linear, warning=FALSE}
 
   comp <- compare_performance(glm.linear.noquad,
@@ -622,9 +589,10 @@ summary(gam.quadratic)
   knitr::kable(comp %>% arrange(desc(AICc_wt)) %>% 
                  select(Name, Model, AICc, AICc_wt))
   
-```  
+```
 
 ### Quadratic survival data
+
 ```{r model comparisons with AIC quadratic, warning=FALSE}
 
   comp <- compare_performance(glm.quadratic.noquad,
@@ -633,60 +601,4 @@ summary(gam.quadratic)
   knitr::kable(comp %>% arrange(desc(AICc_wt)) %>% 
                  select(Name, Model, AICc, AICc_wt))
   
-```  
-
-  
-## Model checks with 'performance' package
-* https://easystats.github.io/performance/
-
-### Linear survival data
-
-::: {.panel-tabset}
-
-### GLM - Linear
-
-```{r fig.height=12, fig.width=8}
-performance::check_model(glm.linear.noquad)
 ```
-  
-### GLM - Quadratic
-  
-```{r fig.height=12, fig.width=8}
-performance::check_model(glm.linear.quad)
-```
-   
-### GAM
-   
-```{r fig.height=12, fig.width=8}
-# performance::check_model(gam.linear)
-```
-       
-:::
-
-
-### Quadratic survival data
-
-::: {.panel-tabset}
-
-### GLM - Linear
-
-```{r fig.height=12, fig.width=8}
-performance::check_model(glm.quadratic.noquad)
-```
-  
-### GLM - Quadratic
-  
-```{r fig.height=12, fig.width=8}
-performance::check_model(glm.quadratic.quad)
-```
-   
-### GAM
-   
-```{r fig.height=12, fig.width=8}
-# performance::check_model(gam.quadratic)
-```
-       
-:::
-
-
-
