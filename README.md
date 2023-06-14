@@ -1,16 +1,10 @@
----
-editor: 
-  markdown: 
-    wrap: sentence
----
-
 ### Cloning this repository to your local computer with Rstudio
 
-1.  In `RStudio`, go to \"File \> New Project\"
+1.  In `RStudio`, go to "File \> New Project"
 
-2.  Click on \"*Version Control: Checkout a project from a version control repository*\"
+2.  Click on "*Version Control: Checkout a project from a version control repository*"
 
-3.  Click on \"*Git: Clone a project from a repository*\"
+3.  Click on "*Git: Clone a project from a repository*"
 
 4.  Fill in the info:
 
@@ -33,17 +27,14 @@ git pull
 -   Then, they should open a Pull Request on Github. This is a request to merge the changes in their branch into the main branch.
 -   The other collaborators review the changes and either approve or request changes. Once approved, the changes can be merged into the main branch.
 -   After merging, the branch can be deleted both locally and on the remote repository
-  - First switch back to the main branch on your local computer
-  - Then pull in changes
-  - Delete the local branch: (git branch -d <branch-name>) 
-
-
+-   First switch back to the main branch on your local computer
+-   Then pull in changes
+-   Delete the local branch: (git branch -d <branch-name>)
 
 ### Information about Quarto books
 
-- [General info about Quarto books](https://quarto.org/docs/books/)
-- [Book structure](https://quarto.org/docs/books/book-structure.html)
-- [Cross referencing](https://quarto.org/docs/books/book-crossrefs.html)
-- [Customizing book output](https://quarto.org/docs/books/book-output.html)
-- [Book options](https://quarto.org/docs/reference/projects/books.html)
-
+-   [General info about Quarto books](https://quarto.org/docs/books/)
+-   [Book structure](https://quarto.org/docs/books/book-structure.html)
+-   [Cross referencing](https://quarto.org/docs/books/book-crossrefs.html)
+-   [Customizing book output](https://quarto.org/docs/books/book-output.html)
+-   [Book options](https://quarto.org/docs/reference/projects/books.html)

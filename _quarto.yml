@@ -12,7 +12,6 @@ book:
   page-navigation: true
   chapters:
     - index.qmd
-    - intro.qmd
     - calculating-neighborhood.qmd
     - linear_vs_nonlinear.qmd
     - calculating-marginal-effects.qmd
