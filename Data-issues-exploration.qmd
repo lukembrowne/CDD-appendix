@@ -1,0 +1,471 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+execute: 
+  cache: true
+---
+
+# CDD Sample Size issues
+
+## Overview
+
+In this section, our objective is to create simulated seedling census data and establish a known 'truth.' Subsequently, we will fit the model and employ diagnostics to assess how well it estimates the truth. Throughout this evaluation, we will intentionally introduce changes to the simulated data, such as reducing the data or modifying the number of alive or dead individuals. By doing so, we can analyze the model's performance under various sample size issues and variations in the data.
+
+```         
+1.  Simulate data and known 'truth'  - *This is the only part that 
+                                        has been implemented 
+
+2.  Change various minimum in data: - ***Need help here to define what we 
+                                         should change in the simulated data? 
+                                         suggestions?
+
+    2.1. Minimum number of alive and dead status in the data set? 
+```
+
+## Load packages
+
+```{r message=FALSE, warning=FALSE}
+
+# Load libraries ----------------------------------------------------------
+
+  library(tidyverse)
+  library(lubridate)
+  library(rstan)
+  library(brms)
+  library(DHARMa)  
+  library(mgcv) # 
+  library(lme4)
+  library(tictoc)
+  library(DHARMa.helpers) 
+  library(performance)
+  library(tidybayes)
+  library(modelr)
+  library(foreach)
+  library(doParallel)
+  library(broom) # For pr
+
+  
+# Set seed for reproducibility --------------------------------------
+  
+  set.seed(42)  
+
+```
+
+## Set sample sizes and parameter values
+
+Here, we set the sample sizes and parameter values for the simulated data, determining what is the 'truth'
+
+```{r Setting sample sizes and parameters, message=FALSE}
+
+# Set sample sizes
+  max_ind_per_plot <- 40   # Maximum number of individuals of each species per plot
+  n_species <- 10 # Number of species in overall data set
+  n_census <- 5 # Number of censuses in data set
+  n_plots <- 25 # Number of seedling plots nested within each site
+  n_sites <- 1 # Number of sites
+  
+# Set parameter values (response will be on logit scale)
+  u_intercept <- 1.8 
+
+# Variances of random effects
+  sigma_species     <-  .25
+  sigma_census      <-  .25
+  sigma_site        <-  .25
+  sigma_plot        <-  .25
+  sigma_noise       <-  .10 # Residual noise - increasing this adds more noise to the data
+  
+# Set strength of NDD effects on logit scale  
+  beta_NDD <- -1.0 # Community-wide non-linear NDD effects  
+  beta_NDD2 <- -0.4 # Quadratic term for non-linear NDD effects
+  
+  beta_height <- -0.35 # Overall effect of height across species
+
+```
+
+## Simulate variation in seedling densities across plots
+
+We start with a maximum data set with 'max_ind_per_plot' individuals per species at each plot and then subset this maximal data set later to create variation in densities across plots
+
+```{r Initializing dataset, message=FALSE}
+
+# Create names for species, plots, censuses, and sites  
+  spp_names <- paste0("SPP", str_pad(1:n_species, width = 3, pad = 0))
+  plot_names <- paste0("P", str_pad(1:n_plots, width = 4, pad = 0))
+  census_names <-  paste0("C", str_pad(1:n_census, width = 2, pad = 0))
+  site_names <-  paste0("S", str_pad(1:n_sites, width = 2, pad = 0))
+
+# Use expand.grid to start to build out dataset
+ dat.sim <-  expand.grid( ind_num = 1:max_ind_per_plot,
+                                spp = spp_names,
+                                plot = plot_names,
+                                site = site_names)
+ 
+# Create unique IDs for each individual 
+ dat.sim$id <- paste0("IND", str_pad(1:nrow(dat.sim), width = 5, pad = 0))
+ 
+ 
+# Expand out censuses so that each individual gets censused n_census times
+ dat.sim <- left_join(dat.sim , 
+                            expand.grid(id = dat.sim$id,
+                                        census = census_names)) %>%
+                  dplyr::select(id, everything()) %>%
+                  as_tibble()
+
+
+# Create variation in densities across plots
+  # For each species plot combination, sample just a fraction of the seedlings that are there
+ 
+  # Using a beta function for the sampling distribution to weight towards lower density plots
+    # Can try out different shapes with this code: 
+    # hist(rbeta(1000, shape1 = .25, shape2 = 1.5), breaks = 50)
+ 
+  dat.sim <- dat.sim %>%
+    group_by(spp, plot, census, site) %>% # Group by species and plot
+    nest() %>% # Turns data into a list-column that can be sampled
+    ungroup() %>%
+    mutate(fraction_to_keep = rbeta(nrow(.), # Generate what fraction of total maximum # of seedlings to keep at each plot
+                                    shape1 = .25, 
+                                    shape2 = 1.5)) %>% 
+    mutate(samp = map2(data, fraction_to_keep, sample_frac)) %>% # Sampling happens here
+    select(-c(data, fraction_to_keep)) %>% # Clean up and unnest
+    unnest(samp)
+
+
+# Create unique IDs for plots nested within sites
+ dat.sim$plot <- paste0(dat.sim$site, "-", dat.sim$plot)
+
+ # Add species.census column
+ dat.sim$species.census <- paste0(dat.sim$spp, "-", dat.sim$census)
+ 
+ # Take a look at the data set
+ dat.sim
+ 
+
+ # Print out stats about simulated data set
+
+  cat("Final # observations in dataset: ", nrow(dat.sim), " ...
+      Final # individuals in dataset: ", length(table(dat.sim$id)), " ...
+      Final # species in dataset: ", length(table(dat.sim$spp)), " ...
+      Final # plots in dataset: ", length(table(dat.sim$plot)), " ...
+      Final # sites in dataset: ", length(table(dat.sim$site)), " ...
+      Final # censuses in dataset: ", length(table(dat.sim$census)), " ...")
+
+```
+
+## Calculate con-specific density at each plot
+
+```{r Calculate conspecific density, message=FALSE}
+# Calculate conspecific density at each plot and add as 'con_dens' column
+dat.sim <- dat.sim %>%
+  group_by(spp, census, plot, site) %>%
+  add_tally(name = "con_dens") %>% # Counts individuals in plot
+  mutate(con_dens = con_dens - 1) %>% # Subtract by 1 to remove counting self
+  ungroup() %>%
+  group_by(census, plot, site) %>%
+  add_tally(name = "total_dens") %>% # Counts total seedlings
+  ungroup()
+
+# Scale con_dens
+dat.sim$con_dens_scaled <- scale(dat.sim$con_dens)[, 1]
+
+
+# Plot histogram of conspecific densities
+ggplot(dat.sim, aes(x = con_dens)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
+  labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
+  theme_bw(12)
+
+```
+
+## Plot effect of CDD on survival
+
+The red line shows survival plotted as a linear function of conspecific density, while the blue line shows survival as a non-linear, quadratic function of conspecific density.
+
+```{r Simulate effect of internannual variation in NDD on survival}
+
+
+# Simulate overall NDD response averaged across all species
+  dat.sim$NDD.effect <- beta_NDD
+  dat.sim$NDD2.effect <- beta_NDD2 # Quadratic term for non-linear effects
+
+
+# Plot community-wide effect of NDD on survival
+  p = ggplot(dat.sim, aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect + con_dens_scaled^2 * NDD2.effect)) + 
+      geom_line(col = "steelblue2", lwd = 2) +
+      geom_line(aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect), col = "red", lwd = 2) +
+      labs(x = "Conspecific density (scaled)", y = "Marginal effect on survival (logit scale)", title = "Effect of NDD on survival") +
+      theme_bw()
+  
+  p
+  
+```
+
+```{r Simulate heights at previous census for each observation}
+ # Add random height
+ dat.sim$s_height <- rnorm(nrow(dat.sim), mean = 0, sd = 1)
+
+ # Generate height effect
+  dat.sim$height.effect <- beta_height
+  
+  #interval betwen census
+ dat.sim$interval <- rnorm(nrow(dat.sim), mean = 1, sd = 0.1)
+  
+# Plot histogram of heights
+ggplot(dat.sim, aes(x = s_height)) +
+  geom_histogram(color = "black", fill = "steelblue2") +
+  labs(x = "Height at last census", y = "Count", title = "Height at last census") + 
+  theme_bw(12)
+  
+```
+
+## Simulating random intercepts
+
+Here, we simulate random effects for species, census, plots, and sites
+
+```{r Simulating species-level intercepts, message=FALSE}
+ # Generate species intercepts 
+  dat.sim <- dat.sim %>% 
+    distinct(spp) %>% 
+    mutate(spp.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(spp.effect = (spp.effect - mean(spp.effect)) / 
+             (( 1 / sigma_species) * sd(spp.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# Generate census effects
+    dat.sim <- dat.sim %>% 
+      distinct(census) %>% 
+      mutate(census.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+      mutate(census.effect = (census.effect - mean(census.effect)) / 
+                             (( 1 / sigma_census) * sd(census.effect))) %>% # Rescale to get actual simulated sigma
+      left_join(., dat.sim)
+ 
+# Generate plot effects
+  dat.sim <- dat.sim %>% 
+    distinct(plot) %>% 
+    mutate(plot.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(plot.effect = (plot.effect - mean(plot.effect)) / 
+             (( 1 / sigma_plot) * sd(plot.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+  
+
+# Generate site effects
+  dat.sim <- dat.sim %>% 
+    distinct(site) %>% 
+    mutate(site.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(site.effect = (site.effect - mean(site.effect)) / 
+             (( 1 / sigma_site) * sd(site.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# If simulating only 1 site, set this effect to 0
+if(n_sites == 1){
+  dat.sim$site.effect <- 0
+} 
+```
+
+## Simulate residual noise
+
+We add some residual noise to the data to simulate the fact that it is very unlikely that we have perfect knowledge of all the factors generating our response variable in a real data set.
+
+```{r Simulate residual noise}
+  dat.sim$noise <- rnorm(nrow(dat.sim), mean = 0, sd = sigma_noise)
+
+```
+
+## Calculate survival probability based on parameters above
+
+Based on the parameters set above, we calculate the probability of survival using both the linear and quadratic form. So far each seedling, there are two separate survival probabilities - one based on survival being a linear function of CDD and one based on survival being a non-linear, quadratic function of CDD.
+
+```{r Simulate survival probability based on parameters above, message=FALSE}
+
+# First calculate effect on logit scale
+  dat.sim$surv.logit <- with(dat.sim, # using 'with' function here to condense code
+                                   c(u_intercept + 
+                                     spp.effect + 
+                                     census.effect +
+                                     plot.effect +
+                                     site.effect +
+                                     s_height+
+                                     noise))
+
+  # Add in NDD effects
+   dat.sim$surv.logit.linear =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled)
+   
+    dat.sim$surv.logit.quadratic =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled +
+                                   NDD2.effect * con_dens_scaled^2 )
+
+  # Convert from logit scale to probability of survival 
+   dat.sim$surv.prob.linear <- plogis(dat.sim$surv.logit.linear)
+   dat.sim$surv.prob.quadratic <- plogis(dat.sim$surv.logit.quadratic)
+
+```
+
+## Determine survival status
+
+To determine whether each seedling lived or died across the census interval, we draw from a binomial distribution where 1 = alive, 0 = dead, based on the calculated survival probability
+
+```{r Determining if seedling is alive or dead}
+# Determine if alive or dead
+  dead.sim.linear <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.linear[i])
+
+  dead.sim.quadratic <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.quadratic[i])
+
+  # Save in main dataframe
+  dat.sim$status.linear <- dead.sim.linear
+  dat.sim$status.quadratic <- dead.sim.quadratic
+
+
+  # Summary stats - number of alive and dead
+  cat("Survival rate (linear): ", round(sum(dat.sim$status.linear == 1)/nrow(dat.sim), 2)*100, "%")
+  cat("Survival rate (quadratic): ", round(sum(dat.sim$status.quadratic == 1)/nrow(dat.sim), 2)*100, "%")
+
+```
+
+## Fit models to quadratic survival data
+
+:::
+
+```{r}
+ # Need to convert random effects to factors first or will get error when fitting model
+dat.sim$spp <- factor(dat.sim$spp)
+dat.sim$plot <- factor(dat.sim$plot)
+dat.sim$census <- factor(dat.sim$census)
+dat.sim$status= dat.sim$status.quadratic ## first trial
+
+# 1. handling rare species in data
+nval = 4  ## this is the number of unique conspecific values
+minrange = 1    # minimum range for conspecific density
+
+dat.sim %>% 
+  group_by(spp) %>% 
+  summarise(
+            range_con_dens = max(con_dens) - min(con_dens),
+            max_con_dens = max(con_dens),
+            unique_con_dens = length(unique(con_dens)),
+            unique_total_dens = length(unique(total_dens)),
+            unique_height = length(unique(s_height))
+  ) %>% 
+  
+  
+  mutate(issue_nval = unique_con_dens < nval,              # less than nval unique values in consp densities
+  issue_range = range_con_dens < minrange,                    # range should at least be equal to minrange
+  trymodel = !(issue_nval|issue_range),    
+  rare = !trymodel                                          # preliminary assignment of rare species
+  ) -> nsp
+
+# model fit formula
+model_fit = function(data, speciesinfo, reduced = F) {
+  
+  # create new factor with correct factor levels per species 
+  data$census = factor(data$census)
+  
+  
+  # create model formula
+  term_c = ifelse(length(unique(data$census)) > 1, "+ s(census, bs = 're')", "") 
+  term_p = "+ s(plot, bs = 're')"
+  
+  if (reduced) {
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)"
+                              , term_c,term_p)) # reduced model #
+  } else {
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)  + s(con_dens, k = k3)" 
+                              , term_c,term_p)) # full model #
+  }
+  
+  # Choose penalty
+  # set to default k=10 
+  k1 = k2 = k3 = 10
+  if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
+  if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
+  if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
+  
+  
+  # Fit model
+  mod = try(gam(form
+                , family = binomial(link=cloglog)
+                , offset = log(interval)
+                , data = data
+                , method = "REML"
+  ) , silent = T
+  )
+  
+  return(mod)
+  
+}
+
+# check model run
+
+model_convergence = function(model) {
+  
+  # gam not available
+  if (!any(class(model)=="gam")) {
+    print(paste(spp, "gam failed"))
+  } else {
+    
+    # gam not converged
+    if (!model$converged) {
+      print(paste(spp, "no convergence"))
+    } else {
+      
+    
+# Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred (complete separation)"
+      eps <- 10 * .Machine$double.eps
+      glm0.resids <- augment(x = model) %>%
+        mutate(p = 1 / (1 + exp(-.fitted)),
+               warning = p > 1-eps,
+               influence = order(.hat, decreasing = T))
+      infl_limit = round(nrow(glm0.resids)/10, 0)
+      # check if none of the warnings is among the 10% most influential observations, than it is okay..
+      num = any(glm0.resids$warning & glm0.resids$influence < infl_limit)
+      
+      # complete separation
+      if (num) {
+        print(paste(spp, "complete separation is likely"))
+      } else {
+        
+        # missing Vc
+        if (is.null(model$Vc)) {
+          print(paste(spp, "Vc not available"))
+        } else {
+        
+        # successful model
+        return(model)
+        }
+      }
+    }
+  }
+}
+
+
+# Fitting the  GAM model 
+res_mod = list()      # main model fits
+res_red_mod = list()  # reduced model fits for Pseudo R2
+
+
+# Fit models for individual species
+for (spp in nsp$spp[nsp$trymodel]) {
+  
+  # select data for individual species
+  dat_sp = dat.sim[dat.sim$spp == spp, ]
+  
+  # model fit and reduced fit for Pseudo R2
+  mod = model_fit(data = dat_sp, speciesinfo = nsp[nsp$spp == spp, ])
+  mod_red = model_fit(data = dat_sp, speciesinfo = nsp[nsp$spp == spp, ], reduced = T)
+  
+  # check model success
+  res = model_convergence(model = mod)
+  res_red = model_convergence(model = mod_red)
+  
+  # save result
+  if (is.character(res)) {
+    nsp$rare[nsp$spp == spp] = T  
+  } else {
+    res_mod[[spp]] = res
+    res_red_mod[[spp]] = res_red
+  }
+}
+```
