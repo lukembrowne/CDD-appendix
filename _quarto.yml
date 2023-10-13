@@ -2,9 +2,9 @@ project:
   type: book
 
 book:
-  title: "CDD appendix"
+  title: "Appendix to Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies"
   author: "Authors here--"
-  date: "5/18/2023"
+  date: "10/13/2023"
   search: true
   repo-url: https://github.com/lukembrowne/CDD-appendix
   repo-actions: [issue, source]
@@ -13,9 +13,9 @@ book:
   chapters:
     - index.qmd
     - calculating-neighborhood.qmd
-    - linear_vs_nonlinear.qmd
     - calculating-marginal-effects.qmd
     - metaregression-comparisons.qmd
+    - Data-issues-exploration.qmd
     - references.qmd
     
 comments:
@@ -32,7 +32,14 @@ format:
     code-copy: true
 
   pdf:
-    documentclass: scrreprt
+    toc: true
+    number-sections: true
+    colorlinks: true
+    
+  docx:
+    toc: true
+    number-sections: true
+    colorlinks: true
 
 editor: visual
 

@@ -3,25 +3,25 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 execute: 
-  cache: true
+  cache: false
 ---
 
-# Using meta-regressions to compare NCDD across species or sites
+# Using Meta-regressions to Compare CDD across Species or Sites
 
 ## Overview
 
-In this section, we demonstrate one approach to comparing the strength of NCDD across species using a meta-analysis framework. The same approach can be used to compare NCDD across sites, plots, or any other unit of interest, as long as it is possible to generate reliable estimates of the strength of NCDD (suitable sample sizes, etc).
+Following from *Section 4. How does CDD vary across species, abiotic gradients or in time?* in the main text, here, we demonstrate one approach to comparing the strength of CDD across species using a meta-analysis framework. The same approach can be used to compare CDD across sites, plots, or any other unit of interest, as long as it is possible to generate reliable estimates of the strength of CDD (suitable sample sizes, etc.). As noted in the main text, "*Correct propagation of uncertainty in CDD estimates requires meta-regressions in frequentist or Bayesian frameworks. Weighted regressions (e.g., lm, lmer, gam) can also estimate how CDD varies e.g., across latitude or between species with different life-history strategies, but incorrectly estimate the associated uncertainty.*"
 
-We use a subset of the BCI seedling data of only 30 species to compare how species abundance is related to the strength of NCDD at the species level. This analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
+We use a subset of the BCI seedling data [@comita2023long] of only 30 species to compare how species abundance is related to the strength of CDD at the species level. This is the same dataset used in section 2. This analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
 
-An advantage of using meta-regressions is that the models are able to account for the uncertainties in the estimates of the strength of NCDD as well as heterogeneity among factors like sites and species through the inclusion of random effects.
+An advantage of using meta-regressions over simple weighted regressions is that the models are able to simultaneously account for uncertainty in species-specific CDD estimates as well as systematic differences in species' CDD when regressed against a predictor via the inclusion of random effects. A simple weighted regression, on the other hand, assumes that there is only one error for which the relative strength is known when regressing the estimates against a predictor. The latter can lead to incorrect weighting of species in the metaregression.
 
-In this tutorial, we use 𝑟𝐴𝑀𝐸 (relatively average marginal effect) calculated in the previous chapter as our response variable, calculated separately for each species. 𝑟𝐴𝑀𝐸 estimates the relative increase in the probability of annual mortality with the addition of one new conspecific neighbor, while keeping total densities constant. Positive numbers indicate a relative increase in mortality with an increase in conspecific density, indicating the presence of NCDD. In principle, any metric of the strength of CDD can be used, though care must be taken to ensure that the metrics are comparable across species and sites (see main text for more information).
+In this tutorial, we use relative average marginal effect (𝑟𝐴𝑀𝐸) calculated in the previous chapter as our response variable, calculated separately for each species. 𝑟𝐴𝑀𝐸 estimates the relative increase in the probability of annual mortality with the addition of one new conspecific neighbor, while keeping total densities constant. Positive numbers indicate a relative increase in mortality with an increase in conspecific density, a signature of NCDD. In principle, any metric of the strength of CDD can be used, though care must be taken to ensure that the metrics are comparable across species and sites (see main text for more information).
 
 We use the popular [metafor package](https://www.metafor-project.org/doku.php/metafor) to fit the meta-regression models.
 
 ::: callout-note
-The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
+The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hülsmann](https://demographicecology.com/).
 :::
 
 ## Load libraries and data
@@ -48,6 +48,9 @@ rAME <- rAME %>%
 
 # Join marginal effects and abundance data
 rAME <- left_join(rAME, abundances, by = c("sp" = "spp"))
+
+# Add in average abundance for 'rare' species
+rAME$abundance[rAME$sp == "rare_seedling"] <- mean(abundances$abundance[abundances$spp %in% nsp$spp[nsp$rare]])
 
 # Log transform abundance to use in models
 rAME$log_abundance <- log(rAME$abundance)
@@ -99,9 +102,9 @@ metamod = metafor::rma(yi = yi,
 summary(metamod)
 ```
 
-## Plot Forest plot
+## Plot the estimated of rAME for all species with a forest plot
 
-In this case, a forest plot shows the estimates of NCDD for individual species, here ordered by least to most abundant going from top to bottom.
+In this case, a forest plot shows the estimates of the strength of CDD for individual species, here ordered by least to most abundant going from top to bottom.
 
 ```{r, fig.height = 8}
 forest(metamod, 
@@ -110,29 +113,40 @@ forest(metamod,
        order = log_abundance)
 ```
 
-## Model Diagnostics
+## Model diagnostics
 
-The plot method displays some model diagnostics, in addition to a forest plot.
+The plot method displays model diagnostics of the meta-regression model ([more info here](https://wviechtb.github.io/metafor/reference/plot.rma.html)) in addition to a forest plot.
 
 ```{r, fig.height = 10, fig.width = 8}
 plot(metamod)
 ```
 
-## Model predictions
+## Model predictions of how species abundance is related to strength of CDD
 
-Here, we generate predictions and corresponding confidence intervals for how species abundance is related to strength of NCDD using the 'predict' function.
+Here, we generate predictions and corresponding confidence intervals for how our predictor of interest is related to the related to strength of CDD using the 'predict' function. In this example, our predictor of interest is species abundance. We also scale the size of the points based on their weight in the meta-analysis, with larger points indicating higher weights. . While this analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data. if we were to interpret the plot
 
 ```{r}
 
 # Generate a prediction dataframe
-pred <- expand_grid(log_abundance = seq(min(dat_meta$log_abundance), 
-                                        max(dat_meta$log_abundance),
+pred <- expand_grid(log_abundance = seq(min(dat_meta$log_abundance, na.rm = TRUE), 
+                                        max(dat_meta$log_abundance, na.rm = TRUE),
                                         length.out = 50))
 
 pred$abundance <- exp(pred$log_abundance) # Back transform abundance
 
 # Bind predictions to dataframe
 pred <- cbind(pred, predict(object = metamod, newmods = pred$log_abundance))
+
+# Extract observed values
+observed_values <- broom::augment(metamod)
+
+# Add in variance estimates to be able to scale size of points by amount of variance in estimate
+observed_values <- left_join(observed_values,
+                             dat_meta %>% 
+                               dplyr::select(sp, vi, log_abundance),
+                             by = c(".rownames" = "sp"))
+
+
 
 # Set abundance values for x axis
 abundances_x_axis <- c(25, 50, 100, 1000, 5000)
@@ -142,9 +156,14 @@ ggplot(pred, aes(x = log_abundance, y = pred)) +
   geom_ribbon(aes(ymin = ci.lb, ymax = ci.ub), fill = "steelblue2", alpha = 0.75) + 
   geom_line() + 
   geom_hline(yintercept = 0, lty = 2) + 
-  labs(x = "Species Abundance", y = "rAME") + 
+  labs(x = "Species Abundance", y = "rAME of CDD") + 
   scale_x_continuous(breaks = log(abundances_x_axis),
                      labels = abundances_x_axis) + 
-  theme_bw(15) 
+  # Add observed points
+  geom_point(data = observed_values,
+             aes(x = log_abundance, y = .observed, size = 1/vi), 
+             alpha = 0.75) + 
+  theme_bw(15) +
+  theme(legend.position = "none")
 
 ```

@@ -488,7 +488,7 @@ For each fit model, we plot the predicted change in survival probability based o
 ```
 :::
 
-## Model diagnostics 
+## Model diagnostics
 
 Here, we run some model diagnostics using the ['DHARMa' package](https://florianhartig.github.io/DHARMa/), which 'uses a simulation-based approach to create readily interpretable scaled (quantile) residuals for fitted (generalized) linear mixed models.' We can use these diagnostics to identify any model mispecifications.
 

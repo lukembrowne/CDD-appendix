@@ -3,18 +3,32 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 execute: 
-  cache: true
+  cache: false
 ---
 
-# calculating-marginal-effects
+# Calculating Marginal Effects
 
 ## Overview
 
+In this section we aim to:
+
+-   Fit Gam models for each species
+
+-   Calculate the Average Marginal Effect (AME)
+
+-   Calculate the Relative Average Marginal Effect (RAME) - this is used for the meta-analyses, which is covered in the next section of the tutorial.
+
+We use a subset of the BCI seedling data of only 30 species. This analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
+
+### Next steps in this tutorial:
+
+-   Calculation of AME and RAME using "marginaleffects" function suitable for seedlings as marginaleffects delta is defined as +1 from the co-variate of interest. Functionalities are explained here: [https://vincentarelbundock.github.io/marginaleffects/articles/slopes.html](https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Fvincentarelbundock.github.io%2Fmarginaleffects%2Farticles%2Fslopes.html&data=05%7C01%7Cnohemi.huanca%40yale.edu%7C0e19aa85c1d14217984f08db66882009%7Cdd8cbebb21394df8b4114e3e87abeb5c%7C0%7C0%7C638216507082081231%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C3000%7C%7C%7C&sdata=hWSNNHhPLg4cMM6rjRJdvEmgmdTujV66n8Ym%2FKqi9yQ%3D&reserved=0 "Original URL: https://vincentarelbundock.github.io/marginaleffects/articles/slopes.html. Click or tap if you trust this link.")
+
 ::: callout-note
-The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
+Note: The code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
 :::
 
-## Load libraries
+## Load libraries and data
 
 ```{r, message=FALSE}
 
@@ -34,27 +48,28 @@ library(broom) # For processing fit models
 library(gratia)
 library(boot)
 library(mgcViz)
+library(MASS)
 ```
 
-## Load data
+This data is a subset from the BCI seedling data
 
 ```{r, message=FALSE}
-data_BCI <- read_csv(here("./data/BCI_seedling data_30 species_2023_05_18.csv"))
-
-# Create column for mortality: 1 == dead, 0 == alive
-data_BCI$mortality <- ifelse(data_BCI$status == 1, yes = 0, no = 1)
-
-
+data_BCI <- read_csv("./data/BCI_seedling data_30 species_2023_05_18.csv")
+# make sure variables are taken as factor
+data_BCI$census <- factor(data_BCI$census)
+data_BCI$spp <- factor(data_BCI$spp)
+data_BCI$plot <- factor(data_BCI$plot)
+data_BCI$s_height=data_BCI$height.last.census
+data_BCI$interval=as.numeric(data_BCI$time.since.last.census)
 ```
 
-# Visualize
+Let's take a quick look at the data set we'll be working with:
 
 ```{r}
   
 # Exploring data 
-
+skim(data_BCI)
   # visualize 
-   skim(data_BCI)
   ggplot(data_BCI, aes(x = con_dens)) +
   geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
   labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
@@ -62,30 +77,18 @@ data_BCI$mortality <- ifelse(data_BCI$status == 1, yes = 0, no = 1)
    
 ```
 
-# Handling rare species
+## Handling rare species
 
-Species that have at least 4 unique Conspecific density values.
-
-comment: In Lisa's code the species that did not fulfill these criteria and those where no convergence was achieved (overall 63.2 % of the species) were fitted jointly in one of two groups -- rare shrub species and rare tree species. she also has at least 20 alive and dead status observations each criteria.
+We classified the species as rare if they have fewer than four unique con-specific density values. We will create a data frame called "nsp" that describe all the species and its classification as rare or not rare.
 
 ```{r, message=FALSE, warning=FALSE}
 
-# save census as factor
-data_BCI$census <- factor(data_BCI$census)
-data_BCI$spp <- factor(data_BCI$spp)
-data_BCI$plot <- factor(data_BCI$plot)
-data_BCI$s_height=data_BCI$height.last.census
-data_BCI$interval=as.numeric(data_BCI$time.since.last.census)
-
-# Handling rare species
-
-nval = 4  ## this is the number of unique conspecific values you want
+nval = 4  ## this is the number of unique conspecific values
+minrange = 1    # minimum range for conspecific density
 
 data_BCI %>% 
   group_by(spp) %>% 
   summarise(
-            # ndead = sum(surv_next==0), # no needed now but may be useful to implement as criteria
-            # nsurv = sum(surv_next==1),
             range_con_dens = max(con_dens) - min(con_dens),
             max_con_dens = max(con_dens),
             unique_con_dens = length(unique(con_dens)),
@@ -93,53 +96,53 @@ data_BCI %>%
             unique_height = length(unique(height.last.census))
   ) %>% 
   
-  # add issues
-  mutate(issue_nval = unique_con_dens < nval,                        # less than nval unique values in consp densities
-         # issue_range = range_con_dens < minrange,                    # range should at least be equal to minrange
-         # issue_cutoff = ndead < x | nsurv < x,                     # ndead or nsurv below cutoff
-         trymodel = !(issue_nval),    # should a species specific model be tried at all? | issue_range | issue_cutoff
-         rare = !trymodel                                          # preliminary assignment of rare species
+  
+  mutate(issue_nval = unique_con_dens < nval,              # less than nval unique values in consp densities
+  issue_range = range_con_dens < minrange,                    # range should at least be equal to minrange
+  trymodel = !(issue_nval|issue_range),    
+  rare = !trymodel                                          # preliminary assignment of rare species
   ) -> nsp
 
-# we created a data frame  called "nsp"
-
+#From our specifific data set 9 species out of 30 were assigned as rare. 
 ```
 
 ## Function for fitting models
 
+Here we defined the formula (co-variates) for the gam models and specified the smooth term in the model formula. If a k value is greater than the number of unique values in the corresponding variable, it is reduced to be two less than the number of unique values. We also check for model convergence and warnings.
+
 ```{r, message=FALSE, warning=FALSE}
+
 model_fit = function(data, speciesinfo, reduced = F) {
   
-  # create new factor with correct factor levels per species (otherwise problem with margins)
+  # create new factor with correct factor levels per species 
   data$census = factor(data$census)
   
   
   # create model formula
-  term_c = ifelse(length(unique(data$census)) > 1, " + s(census, bs = 're')", "") 
+  term_c = ifelse(length(unique(data$census)) > 1, "+ s(census, bs = 're')", "") 
+  #term_p = "+ s(plot, bs = 're')"
   
   if (reduced) {
-    form =  as.formula(paste0("mortality ~ s(s_height, k = k1) + s(total_dens, k = k2)"
-                              , term_c))
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)"
+                              , term_c)) # reduced model #,term_p
   } else {
-    form =  as.formula(paste0("mortality ~ s(s_height, k = k1) + s(total_dens, k = k2)  + s(con_dens, k = k3)"
-                              , term_c))
+    form =  as.formula(paste0("status ~ s(s_height, k = k1) + s(total_dens, k = k2)  + s(con_dens, k = k3)" 
+                              , term_c)) # full model #, term_p
   }
   
-   # chose penalty
-  # set to default 10 (the same as -1)
+  # Choose penalty
+  # set to default k=10 
   k1 = k2 = k3 = 10
   if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
   if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
   if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
   
   
-  # fit model
-  # https://stats.stackexchange.com/questions/27586/spline-df-selection-in-a-general-additive-poisson-model-problem/71300#71300
+  # Fit model
   mod = try(gam(form
                 , family = binomial(link=cloglog)
                 , offset = log(interval)
                 , data = data
-                # , method = "GCV.Cp" # tends to undersmooth
                 , method = "REML"
   ) , silent = T
   )
@@ -147,6 +150,8 @@ model_fit = function(data, speciesinfo, reduced = F) {
   return(mod)
   
 }
+
+# check model run
 
 model_convergence = function(model) {
   
@@ -160,9 +165,8 @@ model_convergence = function(model) {
       print(paste(spp, "no convergence"))
     } else {
       
-      # check for complete separation
-      # https://stats.stackexchange.com/questions/336424/issue-with-complete-separation-in-logistic-regression-in-r
-      # Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred"
+    
+# Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred (complete separation)"
       eps <- 10 * .Machine$double.eps
       glm0.resids <- augment(x = model) %>%
         mutate(p = 1 / (1 + exp(-.fitted)),
@@ -192,12 +196,9 @@ model_convergence = function(model) {
 
 ```
 
-# Fit models for All (expect rare species)
+## Fit models each species that is not rare
 
 ```{r, message=FALSE, warning=FALSE}
-res_mod = list()      # main model fits
-res_red_mod = list()  # reduced model fits for Pseudo R2
-
 
 res_mod = list()      # main model fits
 res_red_mod = list()  # reduced model fits for Pseudo R2
@@ -228,90 +229,88 @@ for (spp in nsp$spp[nsp$trymodel]) {
 
 ```
 
-# Fit models for rare species - Still a work in progress (Skip)
+## Fit models for all species ( and include rare species)
 
-```{r, message=FALSE, warning=FALSE, eval=FALSE}
+Here we fit the model for all species. Rare species are treated as group since there is not sufficient data to be treated independently.
+
+```{r, message=FALSE, warning=FALSE}
 
 # overview rare versus rare and no convergence
-table(rare = nsp$rare, trymodel = nsp$trymodel) # N: We have 9 species here that are considered rare
+table(rare = nsp$rare, trymodel = nsp$trymodel) # We have 9 species here that are considered rare
 
-# make Rare dependent on stature - N: as Shrub or trees 
-stature <- data.frame(spp = unique(data_BCI$spp), stature = "seedling") # we added this for seedlings but is about size
-## for seedlings we should just name all of then species rare_seelings and add to the analyses.
+# Convert spp to character
+data_BCI$spp <- as.character(data_BCI$spp)
 
-nsp$stature = stature$stature[match(nsp$spp, stature$sp)]
-nsp$rare_stature = NA
-nsp$rare_stature[nsp$rare] = paste0("Rare_", nsp$stature[nsp$rare])
+# Create a vector of rare species
+rare_species <- nsp$spp[nsp$rare == TRUE]
 
+# Replace spp values to "rare_seedling" where nsp$rare is TRUE
+data_BCI2 <- data_BCI %>% 
+  mutate(spp = ifelse(spp %in% rare_species, "rare_seedling", spp))
 
-# explore available data per rare species group
-data_BCI %>% 
-  mutate(spp = nsp$rare_stature[match(spp, nsp$spp)]) %>% 
-  filter(!is.na(spp)) %>% 
-  group_by(spp) %>% 
+# Now calculate the attributes for each spp including the "rare_seedling"
+data_BCI2 %>%
+  group_by(spp) %>%
   summarise(
-            # ndead = sum(surv_next==0),
-            # nsurv = sum(surv_next==1),
-            range_con_dens = max(con_dens) - min(con_dens),
-            max_con_dens = max(con_dens),
-            unique_con_dens = length(unique(con_dens)),
-            unique_total_dens = length(unique(total_dens)),
-            unique_height = length(unique(height.last.census))
-  ) %>% 
-  
-  # add issues
-  mutate(issue_nval = unique_con_dens < nval,                            # less than nval unique values in conspecific densities
-         # issue_range = range_con_dens < minrange,                         # range should at least be equal to minrange
-         # issue_cutoff = ndead < x | nsurv < x,                          # ndead or nsurv below cutoff
-         trymodel = !(issue_nval ),         # should a group specific model be tried at all?
+    range_con_dens = max(con_dens, na.rm = TRUE) - min(con_dens, na.rm = TRUE),
+    max_con_dens = max(con_dens, na.rm = TRUE),
+    unique_con_dens = length(unique(con_dens)),
+    unique_total_dens = length(unique(total_dens)),
+    unique_height = length(unique(height.last.census))
+  ) %>%
+  mutate(
+    issue_nval = unique_con_dens < nval,                  # less than nval unique values in consp densities
+    issue_range = range_con_dens < minrange,              # range should at least be equal to minrange
+    trymodel = !(issue_nval | issue_range),               
+    rare = !trymodel                                      # preliminary assignment of rare species
   ) -> nsp_rare
 
 
 
----
-
-# Fit models for species groups
-for (spp in unique(nsp_rare$spp[nsp_rare$trymodel])) {
+# Fit models for all individual species included the rare group species
   
-  # select data for all species in group
-  sps = nsp$spp[which(nsp$rare_stature == spp)]
-  dat_spp = data_BCI[data_BCI$spp %in% sps, ]
+  for(spp in nsp_rare$spp[nsp_rare$trymodel]) {
   
-  # model fit
-  mod = model_fit(data = dat_spp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ])
-  mod_red = model_fit(data = dat_spp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ], reduced = T)  
+  # select data for individual species
+  dat_sp = data_BCI2[data_BCI2$spp == spp, ]
+  
+  # model fit and reduced fit for Pseudo R2
+  mod = model_fit(data = dat_sp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ])
+  mod_red = model_fit(data = dat_sp, speciesinfo = nsp_rare[nsp_rare$spp == spp, ], reduced = T)
   
   # check model success
   res = model_convergence(model = mod)
   res_red = model_convergence(model = mod_red)
   
   # save result
-  if (!is.character(res)) {
-    res_mod[[sp]] = res
-    res_red_mod[[sp]] = res_red
+  if (is.character(res)) {
+    nsp$rare[nsp$spp == spp] = T  
+  } else {
+    res_mod[[spp]] = res
+    res_red_mod[[spp]] = res_red
   }
 }
 
-
 ```
 
-# Regression table via broom::tidy() --------------------------------------
+## Summarize model fits
+
+Regression table via broom::tidy()
 
 ```{r}
 coefs = lapply(res_mod, broom::tidy)
 coefs = Map(cbind, coefs, sp = names(coefs))
 coefs = do.call(rbind, coefs)
-
 ```
 
-# Model summary via broom::glance()
+Model summary via broom::glance()
 
 ```{r}
 # df logLik AIC BIC deviance df.residuals nobs 
 sums = lapply(res_mod, broom::glance)
 sums = Map(cbind, sums, sp = names(sums))
 sums = do.call(rbind, sums)
-
+head(sums)
 
 # AUC
 aucs = lapply(res_mod, function(x) {
@@ -325,27 +324,49 @@ sums$AUC = unlist(aucs)
 sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) / unlist(lapply(res_red_mod, function(x) x$deviance)))
 ```
 
-## AMEs absolute and Relative
+## AMEs Absolute and Relative
 
-AMEs relative are used to compare in meta-analyses while absolute AMEs are reported as they are commonly used in other studies.
+AMEs relative are used to compare CDD across sites, plots, or any other unit of interest with a meta-analyses approach while absolute AMEs are reported as they are commonly used in other studies.
 
-We have will get here a file named res_model that have all the results and coefficients
+For AMEs we need the file "res_model" that have all the models results.
 
-## Function to calculte AMEs without the "gratia" package
+### Settings for AMEs
 
 ```{r}
-library(MASS)
 
+#### chose predictors for local density
+  
+predictors <- c(con_dens = "con_dens", 
+                total_dens = "total_dens")
 
-# Useful functions --------------------------------------------------------
+# change in conspecific density for AME calculations----
 
+additive=1     #One more neighbor or --> pi*((dbh_neighbor/1000)/2)^2 *
+                                        #dec_fun(decay_con,dist_neighbor, decay_type) 
+  
+# different change settings for con-specific densities
+
+interval = 1
+
+change = list(equilibrium = data.frame(con_dens = "paste('+', additive)")
+              , invasion = data.frame(con_dens = "c(0, additive)")
+              , iqr = data.frame(con_dens = "c(q1, q3)")
+              )
+iter = 500
+
+```
+
+### Functions to calculate AMEs manually
+
+This section defines two functions. setstep and get_AME. Get_AME is the function calculates the Average Marginal Effects (AMEs) for a given term in a model. The function first creates two copies of the data, **`d0`** and **`d1`**, and adjusts the term of interest based on the **`change`** argument. It then calculates the predictions for the two data sets and computes the marginal effects.
+
+```{r}
 
 # set step on x for numerical derivative
 setstep = function(x) {
   eps = .Machine$double.eps
   x + (max(abs(x), 1, na.rm = TRUE) * sqrt(eps)) - x
 }
-
 
 
 # Average marginal effects ------------------------------------------------
@@ -359,8 +380,10 @@ get_AME = function(mod, data, term
                    , seed = 10
                    , samples = F) {
   
-  # Two data frames with shift in term of interest:
+  #  Creating two copies of the data frames one of which will shift in term of interest:
   d0 = d1 = data
+  
+  # Adjusting the term of interests with the different options of change
   
   # if change is NULL, use numerical derivative
   if (is.null(change)) {
@@ -385,7 +408,7 @@ get_AME = function(mod, data, term
     
   }
   
-  # Fix at values:
+  # Fix at values: (allows the function to calculate the marginal effects at the specified values)
   if (!is.null(at)) {
     for (i in names(at))
       d0[[i]] = at[[i]]
@@ -399,8 +422,7 @@ get_AME = function(mod, data, term
   # Model settings
   ilink <- family(mod)$linkinv
   beta <- coef(mod)
-  # vc <- mod$Vp # Bayesian
-  vc <- mod$Vc # Bayesian accounting for smoothing parameter uncertainty
+  vc <- mod$Vc # covariance matrix 
   
 
   # marginal effects
@@ -417,19 +439,11 @@ get_AME = function(mod, data, term
   # convert to relative if requested
   if (relative == T) ME = ME/pred0
   
-  # # Alternative for relative:
-  # ME1 = ME/pred0; ME2 = ME/mean(pred0)
-  # plot(ME, ME2)
-  # points(ME, ME1, col = 2)
-  # par(mfrow = c(1, 2))
-  # hist(ME1); hist(ME2)
-  # par(mfrow = c(1, 1))
-  
   # average marginal effect
   AME = mean(ME)
   
   
-  # generate AME samples
+  # generate AME samples for calculating uncertainty in the AME estimates
   
   # variance of average marginal effect via "posterior" simulation
   # simulate from multivariate normal using model beta means and covariance matrix
@@ -463,8 +477,8 @@ get_AME = function(mod, data, term
   if (!samples) {
     res = data.frame(term
                      , estimate = AME
-                     , std.error = sqrt(var(AMEs))  # not a good idea
-                     , estimate.sim = mean(AMEs)    # not a good idea
+                     , std.error = sqrt(var(AMEs))  
+                     , estimate.sim = mean(AMEs)    
                      , offset
                      , change.value = paste(change, collapse = "_"))
     return(res) 
@@ -473,7 +487,7 @@ get_AME = function(mod, data, term
     
     res_sums = data.frame(term
                      , estimate = AME
-                     , std.error = sqrt(var(AMEs)) # not a good idea
+                     , std.error = sqrt(var(AMEs)) 
                      , offset
                      , change.value = paste(change, collapse = "_"))
     
@@ -488,43 +502,11 @@ get_AME = function(mod, data, term
   }
 }
 
-
-
 ```
 
-## Settings for AMEs
+### Calculating Absolute Average Marginal Effect (AMEs)
 
-Need to solve the value of additive is it 1?
-
-```{r}
-
-#### chose predictors for local density
-  
-predictors <- c(con_dens = "con_dens", 
-                total_dens = "total_dens")
-
-# change in conspecific density for AME calculations----
-additive=1 # is 1 ? in the tree analyses was pi*((dbh_neighbor/1000)/2)^2 *  
-#additive = pi*((dbh_neighbor/1000)/2)^2 *         # basal area (m2) of one more neighbor with dbh_neighbor
-  # dec_fun(decay_con, dist_neighbor, decay_type)   # at a distance of dist_neighbor  
-
-  
-# fixed value for interval (offset)
-# different change settings for conspecific densities
-# averaged over all other predictors (total density, dbh...)
-
-interval = 1
-change = list(equilibrium = data.frame(con_dens = "paste('+', additive)")
-              , invasion = data.frame(con_dens = "c(0, additive)")
-              , iqr = data.frame(con_dens = "c(q1, q3)")
-              )
-iter = 500
-
-```
-
-# calculating AMEs
-
-## Absolute AMEs values
+At the end of this code, the **`AME`** data frame contains the AME estimates for the predictor and each type of change, and the **`AMEsamples`** data frame contains the AME samples for each predictor and type of change
 
 ```{r}
 # Absolute AMEs -----------------------------------------------------------
@@ -532,7 +514,7 @@ iter = 500
 # Calculate absolute AMEs based on manual function get_AME
 AME = data.frame()
 AMEsamples = data.frame()
-for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predictors
+for (i in names(predictors)[grepl("con_", names(predictors))]) { 
   for (j in names(change)) {
     temp = lapply(res_mod, function(x){
       if (j == "iqr") {
@@ -563,9 +545,12 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predi
     AMEsamples = rbind(AMEsamples, tempSamples)
   }
 }
+head(AME)
 ```
 
-## Relative AMEs values
+### Calculating Relative Average Marginal Effect (rAMEs)
+
+At the end of this code, the **`rAME`** data frame contains the rAME estimates for the predictor and each type of change, and the **`rAMEsamples`** data frame contains the rAME samples for each predictor and type of change. The type of change used For the next chapter, we will be using the rAME "equilibrium" change type, where the changed is +1 from current con_specific density.
 
 ```{r}
 # Relative AMEs -----------------------------------------------------------
@@ -606,25 +591,18 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) { # for all predi
     rAMEsamples = rbind(rAMEsamples, tempSamples)
   }
 }
-
+head(rAME)
 ```
 
-# Plotting and saving results
+## Plotting and saving results
 
 ```{r}
 # plot splines in pdf -----------------------------------------------------
 
 # Set the PDF file name
-pdf_file <- here("./plots/mortality.pdf")
-
-# Set the PDF device to save the plot
-pdf(pdf_file)
-
+pdf_file <- "mortality.pdf" # save as pdf all the species figures
 
 for (i in 1:length(res_mod))  {
-  
-  # with mgcv
-  # plot(res_mod[[i]], pages = 1, scale = 0, main = names(res_mod)[i], all.terms = T) 
   
   # with gamViz
   vizmod <- getViz(res_mod[[i]], post = T, unconditional = T)
@@ -632,48 +610,27 @@ for (i in 1:length(res_mod))  {
     l_ciLine() + l_fitLine() + l_simLine() + 
     l_ciBar() + l_fitPoints(size = 1) + 
     l_rug() + 
-    # l_points() +
     labs(title = names(res_mod)[i]) 
-  print(pl, pages = 1)
+
+  # Print the plot to the R console only for the first 3 species
+  if (i <= 3) {
+    print(pl, pages = 1)
+  }
   
+  # Save the plot to the PDF
+  pdf(pdf_file)
+  print(pl, pages = 1)
+  dev.off()
 }
-dev.off()
 
 
 # Save results ------------------------------------------------------------
 
 
 save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", "coefs", "sums") # "nsp_rare"
-     , file = paste0(here("./data/mortality.Rdata")))
-load(here("./data/mortality.Rdata"))
-
-```
-
-## Fit one species (Skip)
-
-```{r, eval = FALSE}
-
-#Fit only one specie
-## interval should be the time betwen censuses in years###
-data_BCI_1=data_BCI[data_BCI$spp=="QUARAS",]
-mod <- gam(formula = mortality ~ s(s_height, k = k1) + s(total_dens, k = k2) + s(con_dens, k = k3),
-               family = binomial(link = cloglog),
-               offset = log(interval),
-               data = data_BCI_1,
-               method = "REML")
-
-y_d <- response_derivatives(mod, data = data_BCI_1, type = "central",
-                            focal = "con_dens", eps = 0.01, seed = 21)
-derivative_values <- y_d$derivative
-mean_derivative <- mean(derivative_values)
-#also calculate CI
-
-# draw response derivatives
-p2 <- y_d |>
-    ggplot(aes(x = con_dens, y = derivative)) +
-    geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2) +
-    geom_line() +
-    labs(title = "Estimated 1st derivative of estimated count",
-         y = "First derivative")
+     , file = paste0( "./data/mortality.Rdata"))
+# load("mortality.Rdata")
+write.csv(AME, "AME.csv")
+write.csv(rAME, "rAME.csv")
 
 ```
