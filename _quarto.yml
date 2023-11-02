@@ -4,7 +4,7 @@ project:
 book:
   title: "Appendix to Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies"
   author: "Authors here--"
-  date: "10/13/2023"
+  date: "10/31/2023"
   search: true
   repo-url: https://github.com/lukembrowne/CDD-appendix
   repo-actions: [issue, source]
@@ -15,7 +15,6 @@ book:
     - calculating-neighborhood.qmd
     - calculating-marginal-effects.qmd
     - metaregression-comparisons.qmd
-    - Data-issues-exploration.qmd
     - references.qmd
     
 comments:
@@ -30,25 +29,14 @@ format:
     code-overflow: scroll
     code-tools: true
     code-copy: true
+    embed-resources: true
+
 
   pdf:
     toc: true
     number-sections: true
     colorlinks: true
-    include-in-header: 
-       text: |
-         \usepackage{fvextra}
-         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
-    include-before-body:
-      text: |
-        \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
-          showspaces = false,
-          showtabs = false,
-          breaksymbolleft={},
-          breaklines
-          % Note: setting commandchars=\\\{\} here will cause an error 
-        }
-    
+
   docx:
     toc: true
     number-sections: true

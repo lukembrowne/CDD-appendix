@@ -5,6 +5,7 @@ editor_options:
 execute: 
   cache: true
 ---
+
 ## Overview
 
 In this section, we aim to generate simulated seedling census data based on a predefined 'truth' (e.g., fixed conspecific effect). After simulating the data, we will fit a model to it and strive to recover the underlying 'truth.' We invite readers to actively engage with the simulated data. The provided code is designed to be flexible, enabling users to modify conditions and explore further potential limitations through independent experimentation.
@@ -24,14 +25,15 @@ library(lubridate)
 library(mgcViz)
 library(mgcv)
 library(MASS)
-library(parallel)
-library(pbapply)
 library(readr)
 library(skimr)
-library(spatstat.geom)
 library(stringr)
 library(tidyr)
+library(purr)
+library(foreach)
+library(doParallel)
 ```
+
 ## Data simulation
 
 We start by setting parameter values for our simulated data. You could change these parameter to test other observed 'truth'.
@@ -59,10 +61,12 @@ site_names <- paste0("S", sprintf("%02d", 1:n_sites))
 
 # Adjusted simulation function
 adjusted_simulate_data <- function() {
+  
   data <- data.frame()
   
   for (plot in plot_names) {
     for (census in census_names) {
+      
       remaining_total_dens <- max_ind_per_plot
       current_census_data <- data.frame()
       
@@ -117,7 +121,7 @@ adjusted_simulate_data <- function() {
 }
 
 # Simulate the adjusted data
-adjusted_data <- adjusted_simulate_data()
+data <- adjusted_simulate_data()
 
 # Verify that the sum of total_dens by plot and census is at most max_ind_per_plot
 plot_census_totals <- aggregate(total_dens ~ plot + census, adjusted_data, sum)
@@ -133,7 +137,281 @@ table(adjusted_data$spp)
 
 ```
 
+## Set sample sizes and parameter values
+
+Here, we set the sample sizes and parameter values for the simulated data, determining what is the 'truth'
+
+```{r Setting sample sizes and parameters, message=FALSE}
+
+# Set sample sizes
+  max_ind_per_plot <- 40   # Maximum number of individuals of each species per plot
+  n_species <- 10 # Number of species in overall data set
+  n_census <- 5 # Number of censuses in data set
+  n_plots <- 25 # Number of seedling plots nested within each site
+  n_sites <- 1 # Number of sites
+  
+# Set parameter values (response will be on logit scale)
+  u_intercept <- 1.8 # Overall intercept
+
+# Variances of random effects
+  sigma_species     <-  .25 # amount of variation across species
+  sigma_census      <-  .25 # amount of variation across censuses
+  sigma_site        <-  .25 # amount of variation across sites
+  sigma_plot        <-  .25 # amount of variation across plots
+  sigma_noise       <-  .10 # Residual noise - increasing this adds more noise to the data
+  
+# Set strength of NDD effects on logit scale  
+  beta_NDD <- -1.0 # Community-wide non-linear NDD effects  
+  beta_NDD2 <- -0.4 # Quadratic term for non-linear NDD effects
+  
+  beta_height <- -0.35 # Overall effect of height across species
+
+```
+
+## Simulate variation in seedling densities across plots
+
+We start with a maximum data set with 'max_ind_per_plot' individuals per species at each plot and then subset this maximal data set later to create variation in densities across plots
+
+```{r Initializing dataset, message=FALSE}
+
+# Create names for species, plots, censuses, and sites  
+  spp_names <- paste0("SPP", str_pad(1:n_species, width = 3, pad = 0))
+  plot_names <- paste0("P", str_pad(1:n_plots, width = 4, pad = 0))
+  census_names <-  paste0("C", str_pad(1:n_census, width = 2, pad = 0))
+  site_names <-  paste0("S", str_pad(1:n_sites, width = 2, pad = 0))
+
+# Use expand.grid to start to build out dataset
+ dat.sim <-  expand.grid( ind_num = 1:max_ind_per_plot,
+                                spp = spp_names,
+                                plot = plot_names,
+                                site = site_names)
+ 
+# Create unique IDs for each individual 
+ dat.sim$id <- paste0("IND", str_pad(1:nrow(dat.sim), width = 5, pad = 0))
+ 
+ 
+# Expand out censuses so that each individual gets censused n_census times
+ dat.sim <- left_join(dat.sim , 
+                            expand.grid(id = dat.sim$id,
+                                        census = census_names)) %>%
+                  dplyr::select(id, everything()) %>%
+                  as_tibble()
+
+
+# Create variation in densities across plots
+  # For each species plot combination, sample just a fraction of the seedlings that are there
+ 
+  # Using a beta function for the sampling distribution to weight towards lower density plots
+    # Can try out different shapes with this code: 
+    # hist(rbeta(1000, shape1 = .25, shape2 = 1.5), breaks = 50)
+ 
+  dat.sim <- dat.sim %>%
+    group_by(spp, plot, census, site) %>% # Group by species and plot
+    nest() %>% # Turns data into a list-column that can be sampled
+    ungroup() %>%
+    mutate(fraction_to_keep = rbeta(nrow(.), # Generate what fraction of total maximum # of seedlings to keep at each plot
+                                    shape1 = .25, 
+                                    shape2 = 1.5)) %>% 
+    mutate(samp = purrr::map2(data, fraction_to_keep, sample_frac)) %>% # Sampling happens here
+    dplyr::select(-c(data, fraction_to_keep)) %>% # Clean up and unnest
+    unnest(samp)
+
+
+# Create unique IDs for plots nested within sites
+ dat.sim$plot <- paste0(dat.sim$site, "-", dat.sim$plot)
+
+ # Add species.census column
+ dat.sim$species.census <- paste0(dat.sim$spp, "-", dat.sim$census)
+ 
+ # Take a look at the data set
+ dat.sim
+ 
+
+ # Print out stats about simulated data set
+
+  cat("Final # observations in dataset: ", nrow(dat.sim), " ...
+      Final # individuals in dataset: ", length(table(dat.sim$id)), " ...
+      Final # species in dataset: ", length(table(dat.sim$spp)), " ...
+      Final # plots in dataset: ", length(table(dat.sim$plot)), " ...
+      Final # sites in dataset: ", length(table(dat.sim$site)), " ...
+      Final # censuses in dataset: ", length(table(dat.sim$census)), " ...")
+
+```
+
+## Calculate con-specific density at each plot
+
+```{r Calculate conspecific density, message=FALSE}
+# Calculate conspecific density at each plot and add as 'con_dens' column
+dat.sim <- dat.sim %>%
+  group_by(spp, census, plot, site) %>%
+  add_tally(name = "con_dens") %>% # Counts individuals in plot
+  mutate(con_dens = con_dens - 1) %>% # Subtract by 1 to remove counting self
+  ungroup() %>%
+  group_by(census, plot, site) %>%
+  add_tally(name = "total_dens") %>% # Counts total seedlings
+  ungroup()
+
+# Scale con_dens
+dat.sim$con_dens_scaled <- scale(dat.sim$con_dens)[, 1]
+
+
+# Plot histogram of conspecific densities
+ggplot(dat.sim, aes(x = con_dens)) +
+  geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
+  labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
+  theme_bw(12)
+
+```
+
+## Plot effect of CDD on survival
+
+The red line shows survival plotted as a linear function of conspecific density, while the blue line shows survival as a non-linear, quadratic function of conspecific density.
+
+```{r Simulate effect of internannual variation in NDD on survival}
+
+
+# Simulate overall NDD response averaged across all species
+  dat.sim$NDD.effect <- beta_NDD
+  dat.sim$NDD2.effect <- beta_NDD2 # Quadratic term for non-linear effects
+
+
+# Plot community-wide effect of NDD on survival
+  p = ggplot(dat.sim, aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect + con_dens_scaled^2 * NDD2.effect)) + 
+      geom_line(col = "steelblue2", lwd = 2) +
+      geom_line(aes(x = con_dens_scaled, y = con_dens_scaled * NDD.effect), col = "red", lwd = 2) +
+      labs(x = "Conspecific density (scaled)", y = "Marginal effect on survival (logit scale)", title = "Effect of NDD on survival") +
+      theme_bw()
+  
+  p
+  
+```
+
+```{r Simulate heights at previous census for each observation}
+ # Add random height
+ dat.sim$s_height <- rnorm(nrow(dat.sim), mean = 0, sd = 1)
+
+ # Generate height effect
+  dat.sim$height.effect <- beta_height
+  
+  #interval betwen census
+ dat.sim$interval <- rnorm(nrow(dat.sim), mean = 1, sd = 0.1)
+  
+# Plot histogram of heights
+ggplot(dat.sim, aes(x = s_height)) +
+  geom_histogram(color = "black", fill = "steelblue2") +
+  labs(x = "Height at last census", y = "Count", title = "Height at last census") + 
+  theme_bw(12)
+  
+```
+
+## Simulating random intercepts
+
+Here, we simulate random effects for species, census, plots, and sites
+
+```{r Simulating species-level intercepts, message=FALSE}
+ # Generate species intercepts 
+  dat.sim <- dat.sim %>% 
+    distinct(spp) %>% 
+    mutate(spp.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(spp.effect = (spp.effect - mean(spp.effect)) / 
+             (( 1 / sigma_species) * sd(spp.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# Generate census effects
+    dat.sim <- dat.sim %>% 
+      distinct(census) %>% 
+      mutate(census.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+      mutate(census.effect = (census.effect - mean(census.effect)) / 
+                             (( 1 / sigma_census) * sd(census.effect))) %>% # Rescale to get actual simulated sigma
+      left_join(., dat.sim)
+ 
+# Generate plot effects
+  dat.sim <- dat.sim %>% 
+    distinct(plot) %>% 
+    mutate(plot.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(plot.effect = (plot.effect - mean(plot.effect)) / 
+             (( 1 / sigma_plot) * sd(plot.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+  
+
+# Generate site effects
+  dat.sim <- dat.sim %>% 
+    distinct(site) %>% 
+    mutate(site.effect = rnorm(nrow(.), mean = 0, sd = 1)) %>%
+    mutate(site.effect = (site.effect - mean(site.effect)) / 
+             (( 1 / sigma_site) * sd(site.effect))) %>% # Rescale to get actual simulated sigma
+    left_join(., dat.sim)
+
+# If simulating only 1 site, set this effect to 0
+if(n_sites == 1){
+  dat.sim$site.effect <- 0
+} 
+```
+
+## Simulate residual noise
+
+We add some residual noise to the data to simulate the fact that it is very unlikely that we have perfect knowledge of all the factors generating our response variable in a real data set.
+
+```{r Simulate residual noise}
+  dat.sim$noise <- rnorm(nrow(dat.sim), mean = 0, sd = sigma_noise)
+
+```
+
+## Calculate survival probability based on parameters above
+
+Based on the parameters set above, we calculate the probability of survival using both the linear and quadratic form. So far each seedling, there are two separate survival probabilities - one based on survival being a linear function of CDD and one based on survival being a non-linear, quadratic function of CDD.
+
+```{r Simulate survival probability based on parameters above, message=FALSE}
+
+# First calculate effect on logit scale
+  dat.sim$surv.logit <- with(dat.sim, # using 'with' function here to condense code
+                                   c(u_intercept + 
+                                     spp.effect + 
+                                     census.effect +
+                                     plot.effect +
+                                     site.effect +
+                                     s_height+
+                                     noise))
+
+  # Add in NDD effects
+   dat.sim$surv.logit.linear =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled)
+   
+    dat.sim$surv.logit.quadratic =  with(dat.sim, surv.logit + 
+                                   NDD.effect * con_dens_scaled +
+                                   NDD2.effect * con_dens_scaled^2 )
+
+  # Convert from logit scale to probability of survival 
+   dat.sim$surv.prob.linear <- plogis(dat.sim$surv.logit.linear)
+   dat.sim$surv.prob.quadratic <- plogis(dat.sim$surv.logit.quadratic)
+
+```
+
+## Determine survival status
+
+To determine whether each seedling lived or died across the census interval, we draw from a binomial distribution where 1 = alive, 0 = dead, based on the calculated survival probability
+
+```{r Determining if seedling is alive or dead}
+# Determine if alive or dead
+  dead.sim.linear <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.linear[i])
+
+  dead.sim.quadratic <- foreach(i = 1:nrow(dat.sim), .combine = "c") %dopar% 
+                rbinom(n = 1, size = 1, prob = dat.sim$surv.prob.quadratic[i])
+
+  # Save in main dataframe
+  dat.sim$status.linear <- dead.sim.linear
+  dat.sim$status.quadratic <- dead.sim.quadratic
+
+
+  # Summary stats - number of alive and dead
+  cat("Survival rate (linear): ", round(sum(dat.sim$status.linear == 1)/nrow(dat.sim), 2)*100, "%")
+  cat("Survival rate (quadratic): ", round(sum(dat.sim$status.quadratic == 1)/nrow(dat.sim), 2)*100, "%")
+
+```
+
 ## Function for fitting models
+
 We use here a Generalized Additive Model (GAM) with a complementary log-log (cloglog) link function to model the seedling status ('alive'=0 or 'dead'=1) as a function of conspecific density **con_dens**, total density **total_dens** and tree height or size, the latter serving as a potential confounder or precision covariate.
 
 ```{r, message=FALSE, warning=FALSE}
@@ -223,8 +501,9 @@ model_convergence = function(model) {
 
 ```
 
-## Handling "low" species
-In our simulating data set, we did not generated "low" species. In the following section, we further evaluate to confirm this assumption
+## Handling "data deficient" species
+
+In our simulating data set, we did not generated "data deficient" species. In the following section, we further evaluate to confirm this assumption
 
 ```{r, message=FALSE, warning=FALSE}
 nval = 4  ## this is the number of 'unique' conspecific values
@@ -244,7 +523,7 @@ data %>%
   mutate(issue_nval = unique_con_dens < nval,              
   issue_range = range_con_dens < minrange,                  
   trymodel = !(issue_nval|issue_range),    
-  low = !trymodel                                   
+  data_deficient = !trymodel                                   
   ) -> nsp
 
 # visualize table
@@ -255,16 +534,17 @@ nsp %>%
 ```
 
 ## Fitting models
+
 In this section, we fitted a model for each species in our data set, using the approach described in the previous chapter. The results of the model fitting will be stored in the res_red_mod and res_mod lists.
 
 ```{r, message=FALSE, warning=FALSE}
 
-table(low = nsp$low, trymodel = nsp$trymodel) # 
+table(data_deficient = nsp$data_deficient, trymodel = nsp$trymodel) # 
 data$spp <- as.character(data$spp)
-low_species <- nsp$spp[nsp$low == TRUE]
+data_deficient_species <- nsp$spp[nsp$data_deficient == TRUE]
 
-data<- data %>% 
-  mutate(spp = ifelse(spp %in% low_species, "low_seedling", spp))
+data <- data %>%
+  mutate(spp = ifelse(spp %in% data_deficient_species, "data_deficient_seedling", spp))
 
 
 data %>%
@@ -280,8 +560,8 @@ data %>%
     issue_nval = unique_con_dens < nval,                  
     issue_range = range_con_dens < minrange,              
     trymodel = !(issue_nval | issue_range),               
-    low = !trymodel                                     
-  ) -> nsp_low
+    data_deficient = !trymodel                                     
+  ) -> nsp_data_deficient
 
 
 ####
@@ -292,14 +572,14 @@ res_mod = list()      # main model fits
 res_red_mod = list()  # reduced model fits for Pseudo R2
 
   
-  for(spp in nsp_low$spp[nsp_low$trymodel]) {
+  for(spp in nsp_data_deficient$spp[nsp_data_deficient$trymodel]) {
   
   # select data for individual species
   dat_sp = data[data$spp == spp, ]
   
   # model fit and reduced fit for Pseudo R2
-  mod = model_fit(data = dat_sp, speciesinfo = nsp_low[nsp_low$spp == spp, ])
-  mod_red = model_fit(data = dat_sp, speciesinfo = nsp_low[nsp_low$spp == spp, ], reduced = T)
+  mod = model_fit(data = dat_sp, speciesinfo = nsp_data_deficient[nsp_data_deficient$spp == spp, ])
+  mod_red = model_fit(data = dat_sp, speciesinfo = nsp_data_deficient[nsp_data_deficient$spp == spp, ], reduced = T)
   
   # check model success
   res = model_convergence(model = mod)
@@ -307,7 +587,7 @@ res_red_mod = list()  # reduced model fits for Pseudo R2
   
   # save result
   if (is.character(res)) {
-    nsp$low[nsp$spp == spp] = T  
+    nsp$data_deficient[nsp$spp == spp] = T  
   } else {
     res_mod[[spp]] = res
     res_red_mod[[spp]] = res_red
@@ -320,7 +600,7 @@ res_red_mod = list()  # reduced model fits for Pseudo R2
 
 ```{r}
 # Set the PDF file name
-pdf_file <- "mortality2.pdf"
+pdf_file <- "mortality_simulated.pdf"
 
 # Open the PDF file for writing
 pdf(pdf_file)
@@ -335,12 +615,7 @@ for (i in 1:length(res_mod)) {
     l_ciBar() + l_fitPoints(size = 1) + 
     l_rug() + 
     labs(title = names(res_mod)[i]) 
-  
-  # Print the plot to the R console only for the first 3 species
-  if (i <= 5) {
-    print(pl, pages = 1)
-  }
-  
+
   # Save the plot to the PDF
   print(pl, pages = 1)
 }
@@ -349,8 +624,7 @@ for (i in 1:length(res_mod)) {
 dev.off()
 ```
 
-#Setting AMEs
-We are only extracting **AME** and **rAME** values for con_dens with a change +1
+## Setting AMEs We are only extracting **AME** and **rAME** values for con_dens with a change +1
 
 ```{r}
 
@@ -373,7 +647,8 @@ iter = 500
 
 ```
 
-#Setting up a function to calculate AMEs and rAMEs
+## Setting up a function to calculate AMEs and rAMEs
+
 ```{r}
 setstep = function(x) {
   eps = .Machine$double.eps
@@ -520,7 +795,7 @@ get_AME = function(mod, data, term
 
 ```
 
-#Calculating AME and rAME
+## Calculating AME and rAME
 
 ```{r}
 # Absolute AMEs -----------------------------------------------------------
@@ -608,7 +883,7 @@ head(rAME)
 
 ```
 
-#Plot fixed with estimated AME
+## Plot fixed with estimated AME
 
 We had introduced various source of noise (e.g., to the species' response) in the simulation. Therefore, a fixed B_con_dens = 0.03 is not guaranteed but should be close to the fixed one. If desired, you can adjust the simulation to reduce this noise.
 
@@ -618,11 +893,11 @@ AME$fixed_estimate <- 0.03
 
 # Plotting
 ggplot(AME, aes(y = sp)) +
-  geom_point(aes(x = estimate), color = "blue", position = position_dodge(width = 0.5)) +
+  geom_point(aes(x = estimate)) +
   geom_errorbarh(aes(xmin = estimate - 1.96*std.error, 
                      xmax = estimate + 1.96*std.error), 
-                 height = 0.25, position = position_dodge(width = 0.5)) +
-  geom_point(aes(x = fixed_estimate), color = "black", shape = 16, position = position_dodge(width = 0.5)) +
+                 height = 0.25) +
+  geom_point(aes(x = fixed_estimate), color = "steelblue2", shape = 16, position = position_dodge(width = 0.5)) +
   labs(title = "Estimated vs Fixed AME", 
        x = "AME", 
        y = "Species") +

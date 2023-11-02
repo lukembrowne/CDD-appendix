@@ -1,5 +1,6 @@
 ---
 output: html_document
+prefer-html: true
 editor_options: 
   chunk_output_type: console
 execute: 
@@ -10,11 +11,9 @@ execute:
 
 ## Overview
 
+In this section, we examine a *subset* of the Barro Colorado Island (BCI) seedling data to illustrate the impact of conspecific density on mortality probability. We calculate the Average Marginal Effect ([more about marginal effects in general here](https://marginaleffects.com/)) as our metric of the strength conspecific density dependence. We then estimate both the absolute Average Marginal Effect (AME) and the relative Average Marginal Effect (rAME). The **AME** represents the average absolute change in mortality probability due to a specified increase in conspecific density. In contrast, the **rAME** is the relative change in mortality probability compared to a baseline value.
+
 The standard approach for modeling plant CDD patterns presumes a linear relationship between performance (e.g., mortality/survival) and conspecific neighborhood density metrics. However, in this section, we use ['Generalized Additive Models (GAMs)'](https://multithreaded.stitchfix.com/blog/2015/07/30/gam/) as it offer flexibility for non-linear relationships between performance and predictors.
-
-Based on the these species-specific mortality models, we then quantified the effect of conspecific density in mortality probability. Due to the model's inherent nonlinearity and the distinct intercepts across species we calculated the average marginal effect.
-
-In this section, we examine a *subset* of the Barro Colorado Island (BCI) seedling data to illustrate the impact of conspecific density on mortality probability. We calculate the Average Marginal Effect to measure this impact and then estimate both the absolute Average Marginal Effect (AME) and the relative Average Marginal Effect (rAME). The **AME** represents the average absolute change in mortality probability due to an increase in conspecific density. In contrast, the **rAME** offers a more nuanced perspective by expressing this change as a proportion of the base predicted probability for each species."
 
 ::: callout-note
 Note: The code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hüelsmann](https://demographicecology.com/).
@@ -94,16 +93,17 @@ Let's take a quick look at the data set we'll be working with:
   # visualize 
   ggplot(data_BCI, aes(x = con_dens)) +
   geom_histogram(binwidth = 1, color = "black", fill = "steelblue2") +
-  labs(x = "Conspecific density", y = "Count", title = "Conspecific densities") + 
+  labs(x = "Conspecific density", y = "Count", 
+       title = "Conspecific densities") + 
   theme_bw(12)
    
 ```
 
-## Handling "low" species
+## Handling "data deficient" species
 
-We categorize a species as *low* if it has fewer than four unique conspecific density values. At the end of this section of the code, a data frame named **'nsp'** will be generated. This data frame will classify each species as either "low" or "not low".
+We categorize a species as *data deficient* if it has fewer than four unique conspecific density values. At the end of this section of the code, a data frame named **'nsp'** will be generated. This data frame will classify each species as either "data deficient" or "not data deficient".
 
-From our data set 9 species out of 30 were assigned as *low*.
+From our data set 9 species out of 30 were assigned as *data deficient*. Here, we used the arbitrary thresholds of 4 unique values of conspecific densities and a minimum range of 1 for conspecific as our thresholds for what constitutes a data deficient species. These exact values will depend on the data set and the questions of the study, so we suggest thinking carefully about what the appropriate values are for the purposes of a given study.
 
 ```{r, message=FALSE, warning=FALSE}
 
@@ -120,18 +120,20 @@ data_BCI %>%
             unique_height = length(unique(height.last.census))
   ) %>% 
   
-  
-  mutate(issue_nval = unique_con_dens < nval,              # check if conspecific less than defined nval
-  issue_range = range_con_dens < minrange,                 # range should at least be equal to minrange
-  trymodel = !(issue_nval|issue_range),    
-  low = !trymodel                                          # Assignment of "low" species
+  # check if conspecific less than defined nval
+  mutate(issue_nval = unique_con_dens < nval,
+  # range should at least be equal to minrange
+  issue_range = range_con_dens < minrange,                 
+  trymodel = !(issue_nval|issue_range),
+  # Assignment of "data deficient" species
+  data_deficient = !trymodel                                          
   ) -> nsp # Store the resulting dataframe in the object 'nsp'
 
 # Visualize the top rows of the table 'nsp' in a formatted manner
 nsp %>%
   head() %>%
-  kable(format = "html", table.attr = "class='table table-striped'") %>%
-  kable_styling()
+  kable() %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
 ## Function for fitting models
@@ -144,14 +146,14 @@ We use here a Generalized Additive Model (GAM) with a complementary log-log (clo
 
 The cloglog link accounts for differences in observation time Δ𝑡 through an offset term, applicable to datasets where (0=alive and 1=alive)[@currie2016fitting].
 
-After defining covariates for the GAM models, we specify the smooth term in the model formula. If a k value exceeds the number of unique values in the variable, it is adjusted to be two less than that number. Model convergence and warnings are also checked. which this set up here we define k=2 as minimun as K=1 is a linear relation.
+After defining covariates for the GAM models, we specify the smooth term in the model formula. If a k value exceeds the number of unique values in the variable, it is adjusted to be two less than that number. Model convergence and warnings are also checked. which this set up here we define k=2 as minimum as K=1 is a linear relation.
 
 After defining the covariates for the GAMs, we specify the smooth term in the model formula. The k value determines the complexity of the smooth. If k exceeds the number of unique values in a variable, it's adjusted to be two less than that number. We also monitor model convergence and any warnings that may arise.
 
 ```{r, message=FALSE, warning=FALSE}
 
 # Define a function to fit a model to the given data
-model_fit = function(data, speciesinfo, reduced = F) {
+model_fit = function(data, spinfo, reduced = F) {
   
   # create new factor with correct factor levels per species 
   data$census = factor(data$census)
@@ -160,25 +162,31 @@ model_fit = function(data, speciesinfo, reduced = F) {
   # # Determine if there's more than one unique value in 'census' 
   # and construct the relevant term for the model formula
   
-  term_c = ifelse(length(unique(data$census)) > 1, "+ s(census, bs = 're')", "") 
+  term_c = ifelse(length(unique(data$census)) > 1, 
+                  "+ s(census, bs = 're')", "") 
   #term_p = "+ s(plot, bs = 're')"
   
   if (reduced) {
-    form =  as.formula(paste0("status ~ s(height, k = k1) + s(total_dens, k = k2)"
+    form =  as.formula(paste0("status ~ s(height, k = k1) + 
+                              s(total_dens, k = k2)"
                               , term_c)) # reduced model #,term_p
   } else {
-    form =  as.formula(paste0("status ~ s(height, k = k1) + s(total_dens, k = k2)  + s(con_dens, k = k3)" 
+    form =  as.formula(paste0("status ~ s(height, k = k1) + 
+                              s(total_dens, k = k2) + 
+                              s(con_dens, k = k3)" 
                               , term_c)) # full model #, term_p
   }
   
   # Choose penalty
   # set to default k=10 
   k1 = k2 = k3 = 10
-  if (k1 > speciesinfo$unique_height) k1 = speciesinfo$unique_height - 2
-  if (k2 > speciesinfo$unique_total_dens) k2 = speciesinfo$unique_total_dens - 2
-  if (k3 > speciesinfo$unique_con_dens) k3 = speciesinfo$unique_con_dens - 2
+  if (k1 > spinfo$unique_height) k1 = spinfo$unique_height - 2
+  if (k2 > spinfo$unique_total_dens) k2 = spinfo$unique_total_dens - 2
+  if (k3 > spinfo$unique_con_dens) k3 = spinfo$unique_con_dens - 2
   
-  # k = 1 would force linearity for that term, and we aim to consider also potential non-linear relationships, so conspecific k is k=2 minimum.
+  # k = 1 would force linearity for that term, and we aim to consider 
+  # also potential non-linear relationships, so conspecific k is k=2 
+  # minimum.
   
  # Fit the Generalized Additive Model (GAM)
   mod = try(gam(form
@@ -209,7 +217,8 @@ model_convergence = function(model) {
     } else {
       
     
-# Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred (complete separation)"
+# Explore warning "glm.fit: fitted probabilities numerically 0 or 1 
+      # occurred (complete separation)"
       eps <- 10 * .Machine$double.eps
       glm0.resids <- augment(x = model) %>%
         mutate(p = 1 / (1 + exp(-.fitted)),
@@ -217,9 +226,11 @@ model_convergence = function(model) {
                influence = order(.hat, decreasing = T))
       infl_limit = round(nrow(glm0.resids)/10, 0)
      
-       # Check if any of the warnings correspond to the 10% most influential observations. If not, then it is okay.
+       # Check if any of the warnings correspond to the 10% most 
+      # influential observations. If not, then it is okay.
 
-      num = any(glm0.resids$warning & glm0.resids$influence < infl_limit)
+      num = any(glm0.resids$warning & glm0.resids$influence < 
+                  infl_limit)
       
     # If there's complete separation
       if (num) {
@@ -243,42 +254,52 @@ model_convergence = function(model) {
 
 ## Fit models
 
-Here we fit the model for all species. *low* species are treated as one group since there is not sufficient data to be treated independently. In this dataset we have 9 species that are flagged as 'low',
+Here we fit the model for all species. *data deficient* species are treated as one group since there is not sufficient data to be treated independently. In this dataset, we have 9 species that are flagged as 'data deficient',
 
 ```{r, message=FALSE, warning=FALSE}
 
-# Check the distribution of species marked as 'low' (T or F) 
+# Check the distribution of species marked as 'data deficient' 
+# (T or F) 
 # and determine the number of species for which we will try the model 
 
-table(low = nsp$low, trymodel = nsp$trymodel) # We have 9 species that are flagged as 'low'
+# We have 9 species that are flagged as 'data deficient'
+table(data_deficient = nsp$data_deficient, trymodel = nsp$trymodel) 
 
 # Convert spp to character
 data_BCI$spp <- as.character(data_BCI$spp)
 
-# Extract species that are flagged as 'low' from the nsp dataframe
-low_species <- nsp$spp[nsp$low == TRUE]
+# Extract species that are flagged as 'data deficient' from the nsp 
+# dataframe
+data_deficient_species <- nsp$spp[nsp$data_deficient == TRUE]
 
-# Replace species names with "low_seedling" for those flagged as 'low'
+# Replace species names with "data_deficient_seedling" for those 
+# flagged as 'data_deficient'
 data_BCI2 <- data_BCI %>% 
-  mutate(spp = ifelse(spp %in% low_species, "low_seedling", spp))
+  mutate(spp = ifelse(spp %in% data_deficient_species, 
+                      "data_deficient_seedling", spp))
 
-# # Summarize attributes for each species in the modified dataframe (including the new #"low_seedling" group)
+# # Summarize attributes for each species in the modified dataframe 
+# (including the new #"data_deficient_seedling" group)
 
 data_BCI2 %>%
   group_by(spp) %>%
   summarise(
-    range_con_dens = max(con_dens, na.rm = TRUE) - min(con_dens, na.rm = TRUE),
+    range_con_dens = max(con_dens, na.rm = TRUE) - min(con_dens, 
+                                                       na.rm = TRUE),
     max_con_dens = max(con_dens, na.rm = TRUE),
     unique_con_dens = length(unique(con_dens)),
     unique_total_dens = length(unique(total_dens)),
     unique_height = length(unique(height.last.census))
   ) %>%
   mutate(
-    issue_nval = unique_con_dens < nval,                  # less than nval unique values in consp densities
-    issue_range = range_con_dens < minrange,              # range should at least be equal to minrange
-    trymodel = !(issue_nval | issue_range),               
-    low = !trymodel                                      # preliminary assignment of low species
-  ) -> nsp_low
+    # less than nval unique values in consp densities
+    issue_nval = unique_con_dens < nval, 
+    # range should at least be equal to minrange
+    issue_range = range_con_dens < minrange,              
+    trymodel = !(issue_nval | issue_range),
+    # preliminary assignment of data_deficient species
+    data_deficient = !trymodel                                      
+  ) -> nsp_data_deficient
 
 
 ####
@@ -286,21 +307,30 @@ data_BCI2 %>%
 ###
 
 # Create lists to store results of the main and reduced model fits
-res_mod = list()      # List for main model fits
-res_red_mod = list()  # List for reduced model fits (for calculating Pseudo R2)
+
+# List for main model fits
+res_mod = list()      
+# List for reduced model fits (for calculating Pseudo R2)
+res_red_mod = list()  
 
 
-# Loop through species in the nsp_low dataframe for which we will try modeling 
-# (Here, the group of low species is treated as a single species)
+# Loop through species in the nsp_data_deficient dataframe for which 
+# we will try modeling 
+# (Here, the group of data_deficient species is treated as a single 
+# species)
   
-  for(spp in nsp_low$spp[nsp_low$trymodel]) {
+  for(spp in nsp_data_deficient$spp[nsp_data_deficient$trymodel]) {
   
   # select data for individual species
   dat_sp = data_BCI2[data_BCI2$spp == spp, ]
   
   # Fit the main and reduced models for the current species
-  mod = model_fit(data = dat_sp, speciesinfo = nsp_low[nsp_low$spp == spp, ])
-  mod_red = model_fit(data = dat_sp, speciesinfo = nsp_low[nsp_low$spp == spp, ], reduced = T)
+  mod = model_fit(data = dat_sp, 
+                  spinfo = nsp_data_deficient[nsp_data_deficient$spp 
+                                              == spp, ])
+  mod_red = model_fit(data = dat_sp, 
+                  spinfo = nsp_data_deficient[nsp_data_deficient$spp 
+                                              == spp, ], reduced = T)
   
   # Check the convergence of both models
   res = model_convergence(model = mod)
@@ -308,7 +338,7 @@ res_red_mod = list()  # List for reduced model fits (for calculating Pseudo R2)
   
   # save result
   if (is.character(res)) {
-    nsp$low[nsp$spp == spp] = T  
+    nsp$data_deficient[nsp$spp == spp] = T  
   } else {
     res_mod[[spp]] = res
     res_red_mod[[spp]] = res_red
@@ -330,7 +360,9 @@ coefs = do.call(rbind, coefs)
 Model summary via broom::glance()
 
 ```{r}
-# For each model result in 'res_mod', extract summary statistics (like log-likelihood, AIC, BIC #, etc.) using the 'glance' function from the 'broom' package
+# For each model result in 'res_mod', extract summary statistics 
+# (like log-likelihood, AIC, BIC #, etc.) using the 'glance' function
+# from the 'broom' package
 
 # df logLik AIC BIC deviance df.residuals nobs 
 sums = lapply(res_mod, broom::glance)
@@ -347,13 +379,15 @@ sums$AUC = unlist(aucs)
 
 
 # Pseudo R2
-sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) / unlist(lapply(res_red_mod, function(x) x$deviance)))
+sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) /
+                       unlist(lapply(res_red_mod, function(x) 
+                         x$deviance)))
 ```
 
 ## Plotting results
 
 ```{r}
-# plot splines in pdf -----------------------------------------------------
+# plot splines in pdf ----------------------------------------------
 
 # # Specify the name of the PDF file where the plots will be saved
 pdf_file <- "mortality.pdf"
@@ -367,10 +401,13 @@ for (i in 1:length(res_mod)) {
   # Get the vizmod for the current species
   vizmod <- getViz(res_mod[[i]], post = T, unconditional = T)
   pl <- plot(vizmod, nsim = 20, allTerms = T) + 
-    l_ciLine() + l_fitLine() + l_simLine() + # Add confidence interval line/ fit line/ simulation line
-    l_ciBar() + l_fitPoints(size = 1) +   #Add confidence interval bar/# Add fitted points
+    # Add confidence interval line/ fit line/ simulation line
+    l_ciLine() + l_fitLine() + l_simLine() +
+     #Add confidence interval bar/# Add fitted points
+    l_ciBar() + l_fitPoints(size = 1) +  
     l_rug() +                             # Add rug plot
-    labs(title = names(res_mod)[i])       # # Add title with the name of the current species
+    # Add title with the name of the current species
+    labs(title = names(res_mod)[i])       
   
   # Print the plot to the R console only for the first 3 species
   if (i <= 3) {
@@ -416,21 +453,28 @@ predictors <- c(con_dens = "con_dens",
 
 # change in conspecific density for AME calculations----
 
-additive=1     # One more neighbor seedling  or for adult trees: pi*((dbh_neighbor/1000)/2)^2 *
-                                        #dec_fun(decay_con,dist_neighbor, decay_type) 
+# One more neighbor seedling  
+# or for adult trees: pi*((dbh_neighbor/1000)/2)^2 *
+                        #dec_fun(decay_con,dist_neighbor, decay_type) 
+additive=1     
   
 # different change settings for con-specific densities
 
 interval = 1
 
-# Specify how the conspecific density should be changed for different scenarios: 
+# Specify how the conspecific density should be changed for 
+# different scenarios: 
 # 'equilibrium', 'invasion', and 'iqr' (interquartile range)
 
-change = list(equilibrium = data.frame(con_dens = "paste('+', additive)")
+change = list(equilibrium = data.frame(con_dens = 
+                                         "paste('+', additive)")
               , invasion = data.frame(con_dens = "c(0, additive)") 
               , iqr = data.frame(con_dens = "c(q1, q3)")
               )
-iter = 500 ## Set the number of iterations for any subsequent calculations or simulations
+
+## Set the number of iterations for any subsequent calculations or 
+# simulations
+iter = 500 
 
 ```
 
@@ -441,7 +485,9 @@ This section defines two functions. setstep and get_AME. Get_AME is the function
 ```{r}
 
 # Define a function to set the step size for numerical derivatives
-# This function determines an appropriate step size using machine's precision/machine epsilon to strike a balance between accuracy and rounding errors.
+# This function determines an appropriate step size using machine's 
+# precision/machine epsilon to strike a balance between accuracy and 
+# rounding errors.
 
 setstep = function(x) {
   eps = .Machine$double.eps
@@ -449,7 +495,8 @@ setstep = function(x) {
 }
 
 
-# Function to compute Average and relative Marginal Effects (AME and rAME) for a given model--------------------
+# Function to compute Average and relative Marginal Effects 
+# (AME and rAME) for a given model--------------------
 
 get_AME = function(mod, data, term
                    , change = NULL
@@ -460,13 +507,15 @@ get_AME = function(mod, data, term
                    , seed = 10
                    , samples = F) {
   
-    # Prepare two dataframes for different scenarios in marginal effect computation
+  # Prepare two dataframes for different scenarios in marginal 
+  # effect computation
   d0 = d1 = data
   
  # Adjust the 'term' in the data based on the 'change' parameter
   if (is.null(change)) {
     
-    # If change is NULL, adjust the term for numerical derivative computation
+    # If change is NULL, adjust the term for numerical derivative 
+    # computation
     d0[[term]] = d0[[term]] - setstep(d0[[term]])
     d1[[term]] = d1[[term]] + setstep(d1[[term]])
     
@@ -479,7 +528,8 @@ get_AME = function(mod, data, term
     
   } 
   
-  # If change is explicit with two values, set the term values directly
+  # If change is explicit with two values, set the term values 
+  # directly
   if (length(change) == 2) {
     
     d0[[term]] = as.numeric(change[1])
@@ -487,8 +537,10 @@ get_AME = function(mod, data, term
     
   }
   
-   # If 'at' is specified, set predictor values in the data to these fixed values
-  # (allows the function to calculate the marginal effects at the specified values)
+   # If 'at' is specified, set predictor values in the data to these 
+  # fixed values
+  # (allows the function to calculate the marginal effects at the 
+  # specified values)
   if (!is.null(at)) {
     for (i in names(at))
       d0[[i]] = at[[i]]
@@ -524,8 +576,10 @@ get_AME = function(mod, data, term
   
   # Simulate AMEs to compute uncertainty in the estimates
   
-   # Compute the variance of the average marginal effect through a "posterior" simulation.
-   # This involves simulating from a multivariate normal distribution using the model's  
+   # Compute the variance of the average marginal effect through a 
+   # "posterior" simulation.
+   # This involves simulating from a multivariate normal distribution 
+   # using the model's  
    #coefficient means and covariance matrix
   
   if (!is.null(seed)) set.seed(seed)
@@ -533,7 +587,8 @@ get_AME = function(mod, data, term
                     , mu = beta
                     , Sigma = vc)
   
-    # For each simulated coefficient vector, estimate the Average Marginal Effect (AME).
+    # For each simulated coefficient vector, estimate the Average 
+    # Marginal Effect (AME).
   AMEs = apply(coefmat, 1, function(coefrow) {
     
     # Calculate marginal effects based on the simulated coefficient
@@ -579,7 +634,8 @@ get_AME = function(mod, data, term
                              , estimate = AMEs
                              , MLE = AME
                              , offset
-                             , change.value = paste(change, collapse = "_"))
+                             , change.value = paste(change, 
+                                                    collapse = "_"))
     res = list(res_sums, res_samples)
     return(res)  
     
@@ -593,7 +649,7 @@ get_AME = function(mod, data, term
 At the end of this code segment, the **AME** data frame contains average marginal estimates for each predictor, each corresponding to different change scenarios. In essence, AME provides the average effect that a predictor has on the outcome across these scenarios. On the other hand, the **AMEsamples** data frame contains multiple samples of AME for each predictor, each aligned with a specific type of change scenario, which allows for an evaluation of the uncertainty inherent in the AME estimates.
 
 ```{r}
-# Absolute AMEs -----------------------------------------------------------
+# Absolute AMEs ---------------------------------------------------
 
 # Initialize empty data frames to store the results
 AME = data.frame()
@@ -602,13 +658,15 @@ AMEsamples = data.frame()
 # Loop through predictor names that match "con_"
 for (i in names(predictors)[grepl("con_", names(predictors))]) { 
 
-# Loop through different change settings (e.g., equilibrium, invasion, iqr)
+# Loop through different change settings (e.g., equilibrium, invasion,
+  # iqr)
   for (j in names(change)) {
     
 # Calculate the AME for each model in res_mod
     temp = lapply(res_mod, function(x){
       
-# If the change is based on IQR (interquartile range), calculate the 1st and 3rd quartiles
+# If the change is based on IQR (interquartile range), calculate the
+      # 1st and 3rd quartiles
       if (j == "iqr") {
         q1 = quantile(x$model$con_dens, probs = 0.25)
         q3 = quantile(x$model$con_dens, probs = 0.75)
@@ -634,7 +692,8 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
     
     # AME samples
     tempSamples = lapply(temp, function(x) x[[2]])
-    tempSamples = Map(cbind, tempSamples, change = j, sp = names(tempSamples), iter = iter)
+    tempSamples = Map(cbind, tempSamples, change = j, 
+                      sp = names(tempSamples), iter = iter)
     tempSamples = do.call(rbind, tempSamples)
     AMEsamples = rbind(AMEsamples, tempSamples)
   }
@@ -657,18 +716,21 @@ rAMEsamples = data.frame()
 # Loop through predictor names that match "con_" 
 for (i in names(predictors)[grepl("con_", names(predictors))]) { 
   
-# Loop through different change settings (e.g., equilibrium, invasion, iqr)
+# Loop through different change settings 
+  # (e.g., equilibrium, invasion, iqr)
   for (j in names(change)) {
 
 # Calculate the relative AME (rAME) for each model in res_mod
     temp = lapply(res_mod, function(x){
       
-# If the change is based on IQR (interquartile range), calculate the 1st and 3rd quartiles
+# If the change is based on IQR (interquartile range), 
+  # calculate the 1st and 3rd quartiles
       if (j == "iqr") {
         q1 = quantile(x$model$con_dens, probs = 0.25)
         q3 = quantile(x$model$con_dens, probs = 0.75)
       }
-# Use the get_AME function to calculate the rAME for the current model, setting the 'relative' argument to TRUE
+# Use the get_AME function to calculate the rAME for the 
+  # current model, setting the 'relative' argument to TRUE
       get_AME(x
               , data = x$model
               , offset = interval
@@ -689,7 +751,8 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
     
     # rAME samples
     tempSamples = lapply(temp, function(x) x[[2]])
-    tempSamples = Map(cbind, tempSamples, change = j, sp = names(tempSamples), iter = iter)
+    tempSamples = Map(cbind, tempSamples, change = j, 
+                      sp = names(tempSamples), iter = iter)
     tempSamples = do.call(rbind, tempSamples)
     rAMEsamples = rbind(rAMEsamples, tempSamples)
   }
@@ -700,10 +763,10 @@ head(rAME)
 ## Saving results
 
 ```{r}
-# Save results ------------------------------------------------------------
-save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", "coefs", "sums") # "nsp_low"
+# Save results ---------------------------------------------------
+save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", 
+              "coefs", "sums") # "nsp_data_deficient"
      , file = paste0( "./data/mortality.Rdata"))
-load("data/mortality.Rdata")
-write.csv(AME, "AME.csv")
-write.csv(rAME, "rAME.csv")
+write.csv(AME, "./data/AME.csv")
+write.csv(rAME, "./data/rAME.csv")
 ```

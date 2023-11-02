@@ -1,9 +1,10 @@
 ---
 output: html_document
+prefer-html: true
 editor_options: 
   chunk_output_type: console
 execute: 
-  cache: false
+  cache: true
 ---
 
 # Calculating neighborhood densities
@@ -41,13 +42,13 @@ library(tidyr)
 library(dplyr)
 library(ggplot2)
 library(parallel)
-library(pbapply) # Adds progress bar to apply functions
 library(here)
 library(spatstat.geom)
 library(mgcv) # For fitting gams
 library(lubridate) # For calculating census intervals
 library(broom) # For processing fit models
 library(purrr)
+library(kableExtra) # For table styling
 
 ```
 
@@ -110,7 +111,6 @@ dat <- tibble(bind_rows(tree[[1]] %>% mutate(census = 1),
                  tree[[2]] %>% mutate(census = 2)) %>%
               dplyr::select(-c(homchange, nostems))) %>%
               filter(status %in% c("A", "D"))
-
 ```
 
 Let's take a quick look at the data set we'll be working with:
@@ -154,20 +154,24 @@ Let's see what the exponential decay function looks like across a range of mu va
 #| fig-cap: "Plot of decay function"
 
 # Set range of mu values and distances
-# decay_values <- seq(from = 1, to = 25, by = 2)
-decay_values <- seq(from = 5, to = 10, by = 5)
-decay_names = paste("exp", sprintf("%02s", decay_values), sep = "") # Use sprintf to add leading 0s, will help with sorting later on
+decay_values <- seq(from = 1, to = 25, by = 2)
+
+# Use sprintf to add leading 0s, will help with sorting later on
+decay_names = paste("exp", sprintf("%02s", decay_values), sep = "") 
 
 distances <- seq(1, 100, 1)
 
 # Generate a dataframe with each combination of mu and distance
 example_decay_values <- expand_grid(decay_values, distances) %>%
-                        rename(decay_value = decay_values, # Rename columns
+                        # Rename columns
+                        rename(decay_value = decay_values, 
                                distance = distances)
 
-# Evaluate distance decay function for each combination of mu and distance
-example_decay_values$decay <- exponential_decay(mu = example_decay_values$decay_value,
-                                               distance = example_decay_values$distance)
+# Evaluate distance decay function for each combination of 
+# mu and distance
+example_decay_values$decay <- exponential_decay(
+                              mu = example_decay_values$decay_value,
+                              distance = example_decay_values$distance)
 
 # Plot results
 ggplot(example_decay_values, 
@@ -238,21 +242,23 @@ If the data set were to contain multiple census intervals, it would be necessary
 # Set distance threshold for considering neighbors
 distance_threshold_neighborhood <- 30
 
-# Subset to first census - this will be different for different datasets
+# Subset to first census - this will be different for different 
+# datasets
 dat_first_census <- dat %>%
                     filter(census == 1)
 
 # Format into 'ppp' object
 dat_ppp = spatstat.geom::ppp(dat_first_census$gx, dat_first_census$gy, 
                              window = owin(range(dat$gx), 
-                                           range(dat$gy)), checkdup = F)
+                                           range(dat$gy)), 
+                                           checkdup = F)
 
 # Determine close pairs based on distance threshold
 # Returns a list that we convert to tibble later
 neighbors = spatstat.geom::closepairs(dat_ppp, 
-                                      rmax = distance_threshold_neighborhood, # Max radius
-                                      what = "ijd", # return indicies i, j, and distance 
-                                      twice = TRUE)
+              rmax = distance_threshold_neighborhood, # Max radius
+              what = "ijd", # return indicies i, j, and distance 
+              twice = TRUE)
 
 # Convert to dataframe
 neighbors <- as_tibble(neighbors)
@@ -268,10 +274,18 @@ Next we add in additional columns for neighbor characteristic, (*e.g.,* species,
 
 ```{r}
 # add additional columns
-neighbors$sp_i = dat_first_census$sp[neighbors$i] # Add species for individual i
-neighbors$edge_i = dat_first_census$edge[neighbors$i] # Add whether individual i is near edge
-neighbors$sp_j = dat_first_census$sp[neighbors$j] # Add species for individual j
-neighbors$ba_j = dat_first_census$ba[neighbors$j] # Add basal area of indiviual j
+
+# Add species for individual i
+neighbors$sp_i = dat_first_census$sp[neighbors$i] 
+
+# Add whether individual i is near edge
+neighbors$edge_i = dat_first_census$edge[neighbors$i] 
+
+# Add species for individual j
+neighbors$sp_j = dat_first_census$sp[neighbors$j] 
+
+# Add basal area of individual j
+neighbors$ba_j = dat_first_census$ba[neighbors$j] 
 
 
 ```
@@ -300,14 +314,16 @@ Next, we add columns to our neighbors data set that indicates the distance decay
 for(x in 1:length(decay_values)){
   
   #  Add in column for distance decay multiplier for each decay value
-  # add _ba suffix to column name - will eventually be summed based on number of individual neighbors
+  # add _ba suffix to column name - will eventually be summed based on
+  # number of individual neighbors
   neighbors[, paste0(decay_names[x], "_N")] <- exponential_decay(mu = decay_values[x], 
                                                    distance = neighbors$d)
   
   # Weight distance decay multiplier by basal area of neighbor
   # add _ba suffix to column name
-  neighbors[, paste0(decay_names[x], "_BA")] <- exponential_decay(mu = decay_values[x], 
-                                                   distance = neighbors$d) * neighbors$ba_j
+  neighbors[, paste0(decay_names[x], "_BA")] <- exponential_decay(
+                                                mu = decay_values[x], 
+                             distance = neighbors$d) * neighbors$ba_j
 }
 
 ```
@@ -324,37 +340,45 @@ Then we summarize neighborhood density for each focal tree separately for conspe
 
 ```{r, message=FALSE}
 
-# Simple calculations of number of neighbors and total basal area, ignoring distance decay
+# Simple calculations of number of neighbors and total basal area, 
+# ignoring distance decay
 neighbors_summary <- neighbors %>%
                      group_by(i, comparison_type) %>%
                      summarise(nodecay_N = n(), # count of neighbors
-                                nodecay_BA = sum(ba_j)) # sum of basal area)
+                          nodecay_BA = sum(ba_j)) # sum of basal area)
 
 # Add in decay columns
 neighbors_summary_decay <- neighbors %>%
                             group_by(i, comparison_type) %>%
-                            select(starts_with("exp")) %>% # Select only columns related to distance decay
-                            summarise_all(sum) # Summarize them all by summing columns
+                      # Select only columns related to distance decay
+                            select(starts_with("exp")) %>% 
+                      # Summarize them all by summing columns
+                            summarise_all(sum) 
 
 # Join both together
-neighbors_summary <- left_join(neighbors_summary, neighbors_summary_decay,
+neighbors_summary <- left_join(neighbors_summary, 
+                               neighbors_summary_decay,
                                by = c("i", "comparison_type"))
 
 # Add treeID column
-neighbors_summary$treeID <- dat_first_census$treeID[neighbors_summary$i]
+neighbors_summary$treeID<-dat_first_census$treeID[neighbors_summary$i]
 
 
    
-# If there are any focal individuals with no neighbors, add values of 0 for neighborhood densities 
-      noNeighbors = dat_first_census$treeID[!dat_first_census$treeID %in% neighbors_summary$treeID & !dat_first_census$edge]
+# If there are any focal individuals with no neighbors, add values 
+# of 0 for neighborhood densities 
+      noNeighbors = dat_first_census$treeID[!dat_first_census$treeID 
+                                      %in% neighbors_summary$treeID &
+                                          !dat_first_census$edge]
       
       # If there are individuals with no neighbors
       if (length(noNeighbors) > 0) {
         neighbors_summary = bind_rows(neighbors_summary, 
                                       expand_grid(i = NA, 
                                              treeID = noNeighbors, 
-                                             comparison_type = c("het", "cons"))) %>%
-                            mutate_all(replace_na, replace = 0) # Add 0s where NA
+                             comparison_type = c("het", "cons"))) %>%
+                            # Add 0s where NA
+                            mutate_all(replace_na, replace = 0) 
         }
 
 # Take a peak at the data
@@ -367,7 +391,8 @@ Here, we calculate overall density by summing heterospecific and conspecific den
 
 ```{r, message=FALSE}
 
-# First convert to long format which will make it easy to sum across heterospecific and conspecific values
+# First convert to long format which will make it easy to sum across 
+# heterospecific and conspecific values
 neighbors_summary_long_format <-  neighbors_summary %>%
                                   pivot_longer(cols = -c("i", "comparison_type", "treeID"))
 
@@ -382,10 +407,14 @@ neighbors_total_long_format <- neighbors_summary_long_format %>%
 # fill in 0s where there are no neighbors
 neighbors_summary_total = bind_rows(neighbors_summary_long_format,
                                     neighbors_total_long_format) %>%
-                        #  filter(comparison_type != "het") %>% # Can filter out heterospecific neighborhood values by uncommenting this line of the objects become too large
-                          mutate(name = paste0(comparison_type, "_", name)) %>%
-                          select(-comparison_type) %>%
-                          pivot_wider(names_from = name, values_from = value, values_fill = 0)
+                        # Can filter out heterospecific neighborhood 
+                        # values by uncommenting this line of the
+                        # objects become too large
+                        #  filter(comparison_type != "het") %>% 
+                mutate(name = paste0(comparison_type, "_", name)) %>%
+                select(-comparison_type) %>%
+                pivot_wider(names_from = name, values_from = value, 
+                            values_fill = 0)
 
 ```
 
@@ -412,21 +441,28 @@ For each species, we summarize data availability to help determine parameters fo
 
 ```{r}
 
-# Summarize data availability at species level to set the degree of smoothness for GAM smooth terms
-sp_data_summary <- dat_gam %>% 
-                  group_by(sp) %>% 
-                  summarise(ndead = sum(mort_next),
-                            nsurv = sum(surv_next),
-                            range_con_BA = max(con_nodecay_BA) - min(con_nodecay_BA),
-                            max_con_BA = max(con_nodecay_BA),
-                            unique_con_BA = length(unique(con_nodecay_BA)),
-                            unique_all_BA = length(unique(all_nodecay_BA)),
-                            range_con_N = max(con_nodecay_N) - min(con_nodecay_N),
-                            max_con_N = max(con_nodecay_N),
-                            unique_con_N = length(unique(con_nodecay_N)),
-                            unique_all_N = length(unique(all_nodecay_N)),
-                            unique_dbh = length(unique(dbh))
-                  )
+# Summarize data availability at species level to set the degree of 
+# smoothness for GAM smooth terms
+sp_summary <- dat_gam %>% 
+  group_by(sp) %>% 
+  summarise(ndead = sum(mort_next),
+            nsurv = sum(surv_next),
+            range_con_BA = max(con_nodecay_BA) - min(con_nodecay_BA),
+            max_con_BA = max(con_nodecay_BA),
+            unique_con_BA = length(unique(con_nodecay_BA)),
+            unique_all_BA = length(unique(all_nodecay_BA)),
+            range_con_N = max(con_nodecay_N) - min(con_nodecay_N),
+            max_con_N = max(con_nodecay_N),
+            unique_con_N = length(unique(con_nodecay_N)),
+            unique_all_N = length(unique(all_nodecay_N)),
+            unique_dbh = length(unique(dbh))
+  )
+
+# Filter out species that have 0 or 100% mortality
+sp_summary <- sp_summary %>%
+  filter(ndead > 0) %>%
+  filter(nsurv > 0)
+
 
 ```
 
@@ -441,10 +477,10 @@ res_mod <- list()
 
 
 # Model run settings
-run_settings <- expand_grid(species = unique(dat_gam$sp),
+run_settings <- expand_grid(species = unique(sp_summary$sp),
                             decay_con = c("nodecay", decay_names),
                             decay_total = c("nodecay", decay_names),
-                            neighborhood_data_type = c("N", "BA"))
+                            nhood_data_type = c("N", "BA"))
 
 
 # Loop through model run settings
@@ -454,22 +490,25 @@ for(run_settings_row in 1:nrow(run_settings)){
   species <- run_settings$species[run_settings_row]
   decay_con <- run_settings$decay_con[run_settings_row]
   decay_total <- run_settings$decay_total[run_settings_row]
-  neighborhood_data_type <- run_settings$neighborhood_data_type[run_settings_row]
+  nhood_data_type <- run_settings$nhood_data_type[run_settings_row]
 
   # Subset down to just focal species
   dat_subset <- dat_gam %>%
     filter(sp == species)
 
   # Set run name
-  run_name <- paste0(species, "_total", decay_total,"_con", decay_con, "_", neighborhood_data_type)
+  run_name <- paste0(species, "_total", decay_total,"_con", 
+                     decay_con, "_", nhood_data_type)
   
   # Print status if desired
   # cat("Working on run: ", run_name, " ...\n")
 
   # Create model formula
   # Initial DBH included as predictor variable
-  form =  paste0("mort_next ~ s(dbh, k = k1) + s(all_", decay_total, "_", neighborhood_data_type, 
-                              ", k = k2)  + s(con_", decay_con, "_", neighborhood_data_type, 
+  form =  paste0("mort_next ~ s(dbh, k = k1) + s(all_", decay_total, 
+                              "_", nhood_data_type, 
+                              ", k = k2)  + s(con_", decay_con, 
+                              "_", nhood_data_type, 
                               ", k = k3)")
     
   # Convert into formula
@@ -479,9 +518,15 @@ for(run_settings_row in 1:nrow(run_settings)){
     # set to default 10 (the same as -1)
     # The higher the value of k, the more flexible the smooth term becomes, allowing for more intricate and wiggly patterns. Conversely, lower values of k result in smoother and simpler representations.
     k1 = k2 = k3 = 10
-    if (k1 > sp_data_summary$unique_dbh[sp_data_summary$sp == species]) k1 = sp_data_summary$unique_dbh[sp_data_summary$sp == species] - 2
-    if (k2 > sp_data_summary$unique_all_N[sp_data_summary$sp == species]) k2 = sp_data_summary$unique_all_N [sp_data_summary$sp == species]- 2
-    if (k3 > sp_data_summary$unique_con_N[sp_data_summary$sp == species]) k3 = sp_data_summary$unique_con_N[sp_data_summary$sp == species] - 2
+    if (k1 > sp_summary$unique_dbh[sp_summary$sp == species]) { 
+      k1 = sp_summary$unique_dbh[sp_summary$sp == species] - 2
+    }
+    if (k2 > sp_summary$unique_all_N[sp_summary$sp == species]) {
+      k2 = sp_summary$unique_all_N [sp_summary$sp == species]- 2
+    }
+    if (k3 > sp_summary$unique_con_N[sp_summary$sp == species]) { 
+      k3 = sp_summary$unique_con_N[sp_summary$sp == species] - 2 
+    }
     
 
    # Fit model
@@ -506,14 +551,16 @@ for(run_settings_row in 1:nrow(run_settings)){
   
       # check for complete separation
       # https://stats.stackexchange.com/questions/336424/issue-with-complete-separation-in-logistic-regression-in-r
-      # Explore warning "glm.fit: fitted probabilities numerically 0 or 1 occurred"
+      # Explore warning "glm.fit: fitted probabilities numerically 0 
+      # or 1 occurred"
       eps <- 10 * .Machine$double.eps
       glm0.resids <- augment(x = mod) %>%
         mutate(p = 1 / (1 + exp(-.fitted)),
                warning = p > 1-eps,
                influence = order(.hat, decreasing = T))
       infl_limit = round(nrow(glm0.resids)/10, 0)
-      # check if none of the warnings is among the 10% most influential observations, than it is okay..
+      # check if none of the warnings is among the 10% most 
+      # influential observations, than it is okay..
       num = any(glm0.resids$warning & glm0.resids$influence < infl_limit)
       
       # complete separation
@@ -541,28 +588,36 @@ for(run_settings_row in 1:nrow(run_settings)){
 Next, we will extract regression coefficients into a dataframe using broom::tidy()
 
 ```{r}
-coefs = lapply(res_mod, broom::tidy) # Extract coefficients for each model into a list
-coefs = Map(cbind, coefs, run_name = names(coefs)) # Add a column for model run to each object in the list
+# Extract coefficients for each model into a list
+coefs = lapply(res_mod, broom::tidy) 
+
+# Add a column for model run to each object in the list
+coefs = Map(cbind, coefs, run_name = names(coefs)) 
 coefs = do.call(rbind, coefs) # Bind elements of list together by rows
 rownames(coefs) <- NULL # Remove row names
 coefs <- coefs %>%
           select(run_name, everything()) # Rearrange columns
 
 # Take a look at the data
-knitr::kable(head(coefs), digits = 2, )
+knitr::kable(head(coefs), digits = 2, booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
 Next we will extract model summaries for each model with broom::glance() that provides key information like degrees of freedom, log likelihood, AIC, etc.
 
 ```{r}
-sums = lapply(res_mod, broom::glance) # Extract summaries for each model into a list
-sums = Map(cbind, sums, run_name = names(sums)) # Add a column for model run to each object in the list
+# Extract summaries for each model into a list
+sums = lapply(res_mod, broom::glance) 
+
+# Add a column for model run to each object in the list
+sums = Map(cbind, sums, run_name = names(sums)) 
 sums = do.call(rbind, sums) # Bind elements of list together by rows
 rownames(sums) <- NULL # Remove row names
 
 # Separate run name into columns for species, decay, and density type
 sums <- sums %>%
-        separate(run_name, into = c("sp", "decay_total", "decay_con", "density_type"), 
+        separate(run_name, into = c("sp", "decay_total", 
+                                    "decay_con", "density_type"), 
                  remove = FALSE)
 
 # Remove 'total' and 'con' from decay columns
@@ -571,10 +626,12 @@ sums$decay_con <- gsub("con", "", sums$decay_con)
 
 # Rearrange columns  
 sums <- sums %>%
-          select(run_name, sp, decay_total, decay_con, density_type, everything()) 
+          select(run_name, sp, decay_total, decay_con, density_type, 
+                 everything()) 
 
 # Take a look at the model summaries
-knitr::kable(head(sums), digits = 2)
+knitr::kable(head(sums), digits = 2) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
 Due to limited sample sizes, it is likely that GAMs will not fit for each species. For example, in the table below of summary data of species where models did not successfully fit/converge, there are several instances of where all individuals of the species survived during the census, leading to no mortality events to use in the model.\
@@ -590,7 +647,8 @@ table(sums$sp, sums$decay_total)
 run_counts_by_sp <- sums %>% 
                     group_by(sp) %>%
                     tally() %>%
-                    left_join(sp_data_summary %>% select(sp), ., by = "sp") # Join with overall species list
+                    # Join with overall species list
+                    left_join(sp_summary %>% select(sp), ., by = "sp") 
 
 # Get expected number of runs if all models work
 expected_total_runs <- run_settings %>%
@@ -599,14 +657,21 @@ expected_total_runs <- run_settings %>%
                        pull(n) %>%
                        max()
 
-# Save species names where they didn't have all expected combinations of model runs
-incomplete = run_counts_by_sp$sp[run_counts_by_sp$n < expected_total_runs | is.na(run_counts_by_sp$n)]
+# Save species names where they didn't have all expected combinations 
+# of model runs
+incomplete = run_counts_by_sp$sp[run_counts_by_sp$n < 
+                                   expected_total_runs | 
+                                   is.na(run_counts_by_sp$n)]
 
 # Species with successful runs
-knitr::kable(sp_data_summary[!sp_data_summary$sp %in% incomplete, ], digits = 2)
+knitr::kable(sp_summary[!sp_summary$sp %in% incomplete, ], 
+             digits = 2) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 
 # Species without successful runs
-knitr::kable(sp_data_summary[sp_data_summary$sp %in% incomplete, ], digits = 2)
+knitr::kable(sp_summary[sp_summary$sp %in% incomplete, ], 
+             digits = 2) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 
 
 ```
@@ -639,21 +704,26 @@ We create a heatmap plot @fig-optim of summed log likelihoods for all parameter 
                slice_max(sumlogLik)
   
 # Plot heatmap of log likelihood values
-  ggplot(sums_total, aes(x = decay_total, y = decay_con, fill = sumlogLik)) +
+  ggplot(sums_total, aes(x = decay_total, y = decay_con, 
+                         fill = sumlogLik)) +
     geom_tile(width = 0.9, height = 0.9, col = "black") + 
     scale_fill_viridis_c() + # viridis color palette
     geom_label(data = optimum, label = "X") + 
-    labs(x = "Decay total density", y = "Decay conspecific density", fill = "sumlogLik") + 
+    labs(x = "Decay total density", y = "Decay conspecific density", 
+         fill = "sumlogLik") + 
     facet_wrap(~density_type, ncol = 1) + 
-    theme_bw(12)
-  
+    theme_bw(12) + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, 
+                                     hjust=1))
+   
 
 ```
 
 For this data set, the following are the optimal decay parameter values across all species separately for neighborhood density calculated by abundance (N) and by basal area (BA)
 
 ```{r}
-knitr::kable(optimum, digits = 2)
+knitr::kable(optimum, digits = 2) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
 ## Selecting optimum decay parameter values separately for each species
@@ -672,15 +742,17 @@ sums_total_by_spp <- sums %>%
 sums_total_by_spp
 ```
 
-We create a heatmap plot @fig-optim-spp of log likelihoods for all parameter combinations for each species separately, with the optimal parameter combination marked with an X. With data sets containing many species, it will be hard to visualize all the species on one graph and you may need to subdivide the plot further for visualization.
+We create a heatmap plot @fig-optim-spp of log likelihoods for all parameter combinations for each species separately, with the optimal parameter combination marked with an X. We only display the first three species here, because with data sets containing many species, it will be hard to visualize all the species on one graph and you may need to subdivide the plot further for visualization.
 
-```{r fig.height = 16}
+```{r fig.height = 10, fig.width=8}
 #| label: fig-optim-spp
 #| fig-cap: "Heatmap of optimal values for decay constants separately for each species"
 
   sums <- sums %>%
+    filter(sp %in% c("cappfr", "cordbi", "des2pa")) %>%
     group_by(sp) %>%
-    mutate(logLik_scaled = scale(logLik)) %>% # Scale loglikihood by species to help with visualization
+    # Scale loglikihood by species to help with visualization
+    mutate(logLik_scaled = scale(logLik)) %>% 
     ungroup()
  
 # Find optimum value separately for N and BA
@@ -689,16 +761,19 @@ We create a heatmap plot @fig-optim-spp of log likelihoods for all parameter com
                slice_max(logLik_scaled, with_ties = FALSE)
 
 # Plot heatmap of log likelihood values
-  ggplot(sums, aes(x = decay_total, y = decay_con, fill = logLik_scaled)) +
+  ggplot(sums, aes(x = decay_total, y = decay_con,
+                   fill = logLik_scaled)) +
     geom_tile(width = 0.9, height = 0.9, col = "black") +
     geom_label(data = optimum_by_sp, label = "X") +
-    labs(x = "Decay total density", y = "Decay conspecific density", fill = "logLik") +
+    labs(x = "Decay total density", y = "Decay conspecific density", 
+         fill = "logLik") +
     facet_wrap(~sp + density_type, ncol = 2, scales = "free") +
     scale_fill_viridis_c() + # viridis color palette
     theme_bw(12) + 
     theme(legend.position = "right") + 
     labs(fill = "Log likelihood\n(scaled)") + 
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, 
+                                     hjust=1))
   
 
 ```
@@ -706,5 +781,6 @@ We create a heatmap plot @fig-optim-spp of log likelihoods for all parameter com
 For this data set, the following are the optimal decay parameter values for each species separately for neighborhood density calculated by abundance (N) and by basal area (BA):
 
 ```{r}
-knitr::kable(optimum_by_sp, digits = 2)
+knitr::kable(optimum_by_sp, digits = 2) %>%
+  kable_styling(latex_options = c("striped", "scale_down"))
 ```
