@@ -132,7 +132,7 @@ plot(metamod)
 
 ## Model predictions of how species abundance is related to strength of CDD
 
-Here, we generate predictions and corresponding confidence intervals for how our predictor of interest is related to the related to strength of CDD using the 'predict' function. The y-axis here indicates the relative increase in annual mortality probablity with the addition of one conspecific neighbor. Higher values indicate stronger negative conspecific density dependence. In this example, our predictor of interest is species abundance. We also scale the size of the points based on their weight in the meta-analysis, with larger points indicating higher weights. Note that this analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data. 
+Here, we generate predictions and corresponding confidence intervals for how our predictor of interest is related to the related to strength of CDD using the 'predict' function. The y-axis here indicates the relative increase in annual mortality probablity with the addition of one conspecific neighbor. Higher values indicate stronger negative conspecific density dependence. In this example, our predictor of interest is species abundance. We also scale the size of the points based on their weight in the meta-analysis, with larger points indicating higher weights. Note that this analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
 
 ```{r}
 
@@ -181,3 +181,5 @@ ggplot(pred, aes(x = log_abundance, y = pred)) +
   theme(legend.position = "none")
 
 ```
+
+In principle, the approach outlined in this appendix of estimating marginal effects followed by a meta-regression analysis can be used to test for a correlation between strength of CDD and other species-level traits (*e.g.*, wood density, leaf area, etc) or to determine how site-level CDD varies with site-level variables, such as latitude (Hülsmann et al. 202x), precipitation, soil fertility, etc. 
