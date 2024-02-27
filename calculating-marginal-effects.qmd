@@ -422,6 +422,37 @@ dev.off()
 
 ```
 
+```{R, echo=FALSE}
+
+
+# # Specify the name of the PDF file where the plots will be saved
+#pdf_file <- "mortality.pdf"
+
+# Open the PDF file for writing
+#pdf(pdf_file)
+
+# Loop through all the model results stored in 'res_mod'
+for (i in 1:length(res_mod)) {
+  
+  # Get the vizmod for the current species
+  vizmod <- getViz(res_mod[[i]], post = T, unconditional = T)
+  pl <- plot(vizmod, nsim = 20, allTerms = T) + 
+    # Add confidence interval line/ fit line/ simulation line
+    l_ciLine() + l_fitLine() + l_simLine() +
+     #Add confidence interval bar/# Add fitted points
+    l_ciBar() + l_fitPoints(size = 1) +  
+    l_rug() +                             # Add rug plot
+    # Add title with the name of the current species
+    labs(title = names(res_mod)[i])       
+  
+  # Print the plot to the R console only for the first 2 species
+  if (i <= 2) {
+    print(pl, pages = 1)
+  }
+  
+}
+
+```
 ## AMEs Absolute and Relative
 
 In this section we illustrate the calculation of the average marginal effects, including both the absolute Average Marginal Effect (AME) and the relative Average Marginal Effect (rAME).
