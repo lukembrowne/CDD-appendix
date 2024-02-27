@@ -448,7 +448,6 @@ For each species, we summarize data availability to help determine parameters fo
 sp_summary <- dat_gam %>% 
   group_by(sp) %>% 
   summarise(ndead = sum(mort_next),
-            nsurv = sum(surv_next),
             range_con_BA = max(con_nodecay_BA) - min(con_nodecay_BA),
             max_con_BA = max(con_nodecay_BA),
             unique_con_BA = length(unique(con_nodecay_BA)),
@@ -460,10 +459,9 @@ sp_summary <- dat_gam %>%
             unique_dbh = length(unique(dbh))
   )
 
-# Filter out species that have 0 or 100% mortality
+# Filter out species that have 0% mortality
 sp_summary <- sp_summary %>%
-  filter(ndead > 0) %>%
-  filter(nsurv > 0)
+  filter(ndead > 0)
 
 
 ```
