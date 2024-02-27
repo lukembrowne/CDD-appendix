@@ -453,6 +453,7 @@ for (i in 1:length(res_mod)) {
 }
 
 ```
+
 ## AMEs Absolute and Relative
 
 In this section we illustrate the calculation of the average marginal effects, including both the absolute Average Marginal Effect (AME) and the relative Average Marginal Effect (rAME).
