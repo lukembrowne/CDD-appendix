@@ -7,9 +7,10 @@ execute:
   cache: true
 ---
 
-# Calculating Marginal Effects
+# 3. Calculating Marginal Effects
 
-This tutorial follows from Section 2. "Modeling considerations when estimating CDD" of the main text. \## Overview
+This tutorial follows from Section 2. "Modeling considerations when estimating CDD" of the main text. 
+## 3.1 Overview
 
 In this section, we examine a *subset* of the Barro Colorado Island (BCI) 50-ha plot seedling [data](https://datadryad.org/stash/dataset/doi:10.5061/dryad.05qfttf85) to illustrate the impact of conspecific density on mortality probability. We calculate the Average Marginal Effect ([more about marginal effects in general here](https://marginaleffects.com/)) as our metric of the strength conspecific density dependence. We then estimate both the absolute Average Marginal Effect (aAME) and the relative Average Marginal Effect (rAME). The **aAME** represents the average absolute change in mortality probability due to a specified increase in conspecific density. In contrast, the **rAME** is the relative change in mortality probability compared to a baseline value.
 
@@ -19,7 +20,7 @@ The standard approach for modeling plant CDD patterns presumes a linear relation
 Note: The code is adapted from [@hulsmann2024latitudinal] and the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by Lisa Hüelsmann. 
 :::
 
-## Load libraries
+## 3.2 Load libraries
 
 ```{r, message=FALSE}
 
@@ -37,7 +38,7 @@ library(MASS)
 library(tidyr)
 ```
 
-## Load data
+## 3.3 Load data
 
 Our demonstration here used seedling data. We utilized a subset of the Barro Colorado Island (BCI) 50-ha forest dynamics plot seedling data, encompassing only 30 species. Seedlings are censused in 1x1 m plots, distributed at 5-m intervals throughout the 50-ha plot. In this example, neighbor densities are calculated using the number of conspecific and heterospecific seedling neighbors within the same 1x1m plot as the focal individual. Please note that this analysis is *solely for demonstration purposes*; hence, no biological conclusions should be drawn from the results due to the limited data subset used.
 
@@ -92,7 +93,7 @@ Let's take a quick look at the data set we'll be working with:
    
 ```
 
-## Handling "data deficient" species
+## 3.4 Handling "data deficient" species
 
 We categorize a species as *data deficient* if it has fewer than four unique conspecific density values. This threshold is important because estimating a reliable "slope" requires at least a few different values along the variable of interest. At the end of this section of the code, a data frame named **'nsp'** will be generated. This data frame will classify each species as either "data deficient" or "not data deficient".
 
@@ -129,7 +130,7 @@ nsp %>%
   kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
-## Function for fitting models
+## 3.5 Function for fitting models
 
 In the context of the Janzen-Connell Hypothesis, we focus on the differences between CDD and HDD ('Stabilizing effect'), where conspecific neighbors' negative effects surpass those from heterospecifics, leading to population stabilization [@broekman2019signs]. This effect is vital for estimating a species' self-limitation.
 
@@ -243,7 +244,7 @@ model_convergence = function(model) {
 
 ```
 
-## Fit models
+## 3.6 Fit models
 
 Here we fit the models for all species. *Data deficient* species are treated as one group since there is not sufficient data to be treated independently. In this dataset, we have 9 species that are flagged as 'data deficient',
 
@@ -338,7 +339,7 @@ res_red_mod = list()
 
 ```
 
-## Summarize model fits
+## 3.7 Summarize model fits
 
 Regression table via broom::tidy()
 
@@ -375,7 +376,7 @@ sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) /
                          x$deviance)))
 ```
 
-## Plotting results
+## 3.8 Plotting results
 
 ```{r}
 # plot splines in pdf ----------------------------------------------
@@ -445,7 +446,7 @@ for (i in 1:length(res_mod)) {
 
 ```
 
-## AMEs Absolute and Relative
+## 3.9 AMEs Absolute and Relative
 
 In this section we illustrate the calculation of the average marginal effects, including both the absolute Average Marginal Effect (aAME) and the relative Average Marginal Effect (rAME).
 
@@ -457,7 +458,7 @@ To calculate **aAMEs** and **rAMEs** we need the file "res_model" that includes 
 
 There is also alternative approaches for calculating average marginal effects using ['marginaleffects' package](https://marginaleffects.com/articles/slopes.html) that we encourage the user to explore.
 
-### Settings for AMEs
+### 3.9.1 Settings for AMEs
 
 Here we provide three scenarios for calculating **aAMEs** or **rAMEs** through the **`change`** argument.
 
@@ -498,7 +499,7 @@ iter = 500
 
 ```
 
-### Functions to calculate aAMEs and rAME
+### 3.9.2 Functions to calculate aAMEs and rAME
 
 This section will write and define two functions. The setstep function and get_AME function. Get_AME is a function to calculate the Average Marginal Effects for a given term in a model. The function first creates two copies of the data, **`d0`** and **`d1`**, and adjusts the term of interest based on the **`change`** argument (one of the three scenarios described in the previous section). It then calculates the predictions for the two data sets and computes the marginal effects.
 
@@ -664,7 +665,7 @@ get_AME = function(mod, data, term
 
 ```
 
-### Calculating Absolute Average Marginal Effect (aAMEs)
+### 3.9.3 Calculating Absolute Average Marginal Effect (aAMEs)
 
 At the end of this code segment, the **aAME** data frame contains average marginal estimates for each predictor, each corresponding to different change scenarios. In essence, aAME provides the average effect that a predictor has on the outcome across these scenarios. On the other hand, the **aAMEsamples** data frame contains multiple samples of aAME for each predictor, each aligned with a specific type of change scenario, which allows for an evaluation of the uncertainty inherent in the aAME estimates.
 
@@ -721,7 +722,7 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
 head(AME)
 ```
 
-### Calculating Relative Average Marginal Effect (rAMEs)
+### 3.9.4 Calculating Relative Average Marginal Effect (rAMEs)
 
 At the end of this code segment, the **`rAME`** data frame contains the**`rAME`** estimates for the predictor and each type of change, and the **`rAMEsamples`** data frame contains the **`rAME`** samples for each predictor and type of change.
 
@@ -780,7 +781,7 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
 head(rAME)
 ```
 
-## Saving results
+## 3.10 Saving results
 
 ```{r}
 # Save results ---------------------------------------------------
