@@ -53,7 +53,7 @@ library(kableExtra) # For table styling
 
 ## Data format explanation
 
-For this tutorial, we will be using an example data set from Barro Colorado Island (BCI), Panama ([available here](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/data_prep/input/data_tree)) that includes 7,028 observations, of 3,771 individuals of 16 tree species across two censuses from the larger 50 ha BCI 50 ha Forest Dynamics Plot data set ([more information here](https://forestgeo.si.edu/sites/neotropics/barro-colorado-island)). Each stem is individually mapped and its diamter at 1.3m above ground is measured (DBH), which allows us to calculate neighborhood density across different distance thresholds and as a function of neighbor size (*e.g.*, basal area), respectively.
+For this tutorial, we will be using an example data set from Barro Colorado Island (BCI), Panama ([available here](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/data_prep/input/data_tree)) that includes 7,028 observations, of 3,771 individuals of 16 tree species across two censuses from the larger 50 ha BCI 50 ha Forest Dynamics Plot data set ([more information here](https://forestgeo.si.edu/sites/neotropics/barro-colorado-island)). Each stem is individually mapped and its diameter at 1.3m above ground is measured (DBH), which allows us to calculate neighborhood density across different distance thresholds and as a function of neighbor size (*e.g.*, basal area), respectively.
 
 The code below assumes the data is in a format where each row is an observation for an individual from a census. For this data set, the column descriptions are as follows:
 
@@ -448,7 +448,6 @@ For each species, we summarize data availability to help determine parameters fo
 sp_summary <- dat_gam %>% 
   group_by(sp) %>% 
   summarise(ndead = sum(mort_next),
-            nsurv = sum(surv_next),
             range_con_BA = max(con_nodecay_BA) - min(con_nodecay_BA),
             max_con_BA = max(con_nodecay_BA),
             unique_con_BA = length(unique(con_nodecay_BA)),
@@ -460,10 +459,9 @@ sp_summary <- dat_gam %>%
             unique_dbh = length(unique(dbh))
   )
 
-# Filter out species that have 0 or 100% mortality
+# Filter out species that have 0% mortality
 sp_summary <- sp_summary %>%
-  filter(ndead > 0) %>%
-  filter(nsurv > 0)
+  filter(ndead > 0)
 
 
 ```
