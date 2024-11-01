@@ -11,7 +11,7 @@ execute:
 
 ## Overview
 
-This tutorial follows from the Section 2. "Modeling considerations when estimating CDD" of the main text:
+This tutorial follows from Section 2. "Modeling considerations when estimating CDD" of the main text:
 
 ::: callout-note
 ## Section 2. "Modeling considerations when estimating CDD"
@@ -19,18 +19,18 @@ This tutorial follows from the Section 2. "Modeling considerations when estimati
 For survival and growth models, defining the density metric and the size of local neighborhoods also require consideration. The density of conspecific and heterospecific neighbors surrounding a focal individual (or plot) can be measured within different distances (i.e., radii). Within a radius, neighbors should be weighted in the density summation with regard to their size and distance to the focal individuals, with the rationale that neighbors at a greater distance and of smaller size have smaller effects. Typically, weighting involves dividing the basal area or diameter by a linear function or an exponential function of distance to allow competitive effects of an individual of a given size to decline with distance [@uriarte2010trait; @canham2006neighborhood]. Biologically meaningful radii should be tested based on the size/life stage, vital rate of interest, and the likely agents of density dependence in the system. For a system of interest, we suggest comparing models with multiple distances (e.g., using maximum likelihood or information criterion) because forests may differ in how neighbors influence performance.
 :::
 
-Here, we demonstrate how to calculate the density of conspecific, heterospecific, and all neighbors surrounding a focal individual or plot for a given distance when XY coordinates are known. As a result, this section requires that the data set contains the location of mapped stems. If that is not available (as is common in seedling studies or smaller plots), continue to part 2 of this appendix.
+Here, we demonstrate how to calculate the density of conspecific, heterospecific, and all neighbors surrounding a focal individual or plot for a given distance when XY coordinates are known. As a result, this section requires that the user's dataset contains the location of mapped stems. If locations are not known (as is common in seedling studies or smaller plots), continue to part 2 of this appendix.
 
-We then demonstrate how to weight the calculation of neighborhood density by individual neighbor size (*i.e.,* basal area) and distance using an exponential decay function (one of many possible decay functions), allowing the competitive effects of density effects to saturate [@uriarte2010trait; @canham2006neighborhood].
+We then demonstrate how to weight the calculation of neighborhood density by individual neighbor size (*i.e.,* basal area) and distance using an exponential decay function (one of many possible decay functions), allowing the competitive effects of density values to saturate with increasing distances [@uriarte2010trait; @canham2006neighborhood].
 
 To assess which shape parameters of the exponential decay function are most appropriate for the data set, we fit models with multiple combinations of decay function values and compare models using log likelihood.
 
 From a computational perspective, this approach can be relatively resource intensive both in terms of time and object size. It's possible to make this approach more efficient by subdividing the data (*e.g.,* by plot) or using more efficient data structures such as [data.table](https://cran.r-project.org/web/packages/data.table/vignettes/datatable-intro.html).
 
-We also note that alternative approaches allow the estimation of the effective scale of neighborhood interactions directly from data [see @barber2022bayesian]. An excellent case study using Stan is [available here](https://mc-stan.org/users/documentation/case-studies/plantInteractions.html).
+We also note that alternative approaches allow the estimation of the effective scale of neighborhood interactions directly from data [see @barber2022bayesian]. An excellent case study using the Stan programming language is [available here](https://mc-stan.org/users/documentation/case-studies/plantInteractions.html).
 
 ::: callout-note
-The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD) by [Lisa Hülsmann](https://demographicecology.com/).
+The following code is heavily adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD) by [Lisa Hülsmann](https://demographicecology.com/) from the publication @hulsmann2024latitudinal.
 :::
 
 ## Load libraries and data
@@ -53,7 +53,7 @@ library(kableExtra) # For table styling
 
 ## Data format explanation
 
-For this tutorial, we will be using an example data set from Barro Colorado Island (BCI), Panama ([available here](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/data_prep/input/data_tree)) that includes 7,028 observations, of 3,771 individuals of 16 tree species across two censuses from the larger 50 ha BCI 50 ha Forest Dynamics Plot data set ([more information here](https://forestgeo.si.edu/sites/neotropics/barro-colorado-island)). Each stem is individually mapped and its diameter at 1.3m above ground is measured (DBH), which allows us to calculate neighborhood density across different distance thresholds and as a function of neighbor size (*e.g.*, basal area), respectively.
+For this tutorial, we will be using a small example subset of data from Barro Colorado Island (BCI), Panama ([available here](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/data_prep/input/data_tree)) that includes 7,028 observations, of 3,771 individuals of 16 tree species across two censuses from the larger 50 ha BCI Forest Dynamics Plot data set ([more information here](https://forestgeo.si.edu/sites/neotropics/barro-colorado-island)). Each stem is mapped and its diameter at 1.3m above ground is measured (DBH), which allows us to calculate neighborhood densities across different distances, and as a function of neighbor size (*e.g.*, basal area), respectively.
 
 The code below assumes the data is in a format where each row is an observation for an individual from a census. For this data set, the column descriptions are as follows:
 
@@ -125,7 +125,7 @@ We can produce a plot @fig-map of the tree locations, where the size of the poin
 
 ```{r, fig.width = 8, fig.height=8}
 #| label: fig-map
-#| fig-cap: "Map of tree locations by census"
+#| fig-cap: "Map of tree locations by census. Points are individual stems scaled by basal area, and colors represent the six-letter identifiers of 16 common species at the BCI forest plot."
 
 ggplot(dat, aes(x = gx, y = gy, size = ba, col = sp)) + 
   geom_point() + 
@@ -135,9 +135,11 @@ ggplot(dat, aes(x = gx, y = gy, size = ba, col = sp)) +
   labs(size = "Basal area", col = "Species")
 ```
 
-## Define exponential decay function
+## Define an exponential decay function
 
-We will demonstrate how to calculate neighborhood densities using an exponential decay function. In principle, it's possible to use any number of different decay functions and to explore various ranges of values that determine the rate of decay. Here, we present the general framework for how one might explore different scenarios, though the ultimate choice of decay function and parameter values will depend on the study. **Note that this method of calculating neighborhood density is only possible when neighbors' x-y coordinates are known.**
+In our neighborhood, we model neighborhood densities using an exponential decay function. In principle, it’s possible to use various different decay functions to explore various ranges that determine the rate of decay.
+
+Here, we present the general framework for how one might explore different scenarios, though the ultimate choice of decay function and parameter values will depend on the study and is beyond the scope of this Appendix. **Note that this method of calculating neighborhood density is only possible when neighbors' x-y coordinates are known.**
 
 First, we write a function in R for exponential decay with distance, where mu controls the shape of the curve:
 
@@ -189,11 +191,11 @@ ggplot(example_decay_values,
 
 ### Determine which trees are at edge of plot
 
-Trees near the edge of plot boundaries have incomplete information about their neighborhood, because neighboring trees outside of the plot boundaries are not mapped. Typically trees within certain distance threshold from the plot edge are excluded from analysis, but still included in calculations of neighborhood densities.
+Trees near the edge of plot boundaries have incomplete information about their neighborhood, because neighboring trees outside of the plot boundaries are not mapped, and we do not advise using boundary corrections to include those stems.Typically trees within certain distance threshold from the plot edge are excluded from analysis, but still included in calculations of neighborhood densities.
 
 We are going to add a column to our data set called 'edge' that is TRUE if within a set distance to the edge of the plot (*e.g.*, 30 m in the example below).
 
-For this example data set, the dimensions of the overall plot are 300 x 300 m, ranging from 0-300 on both the x and y axis, and representing a subset of the overall 50 ha forest dynamics plot at BCI.
+For our example data set, the dimensions of the plot are 300 x 300 m, ranging from 0-300 on both the x and y axis, and representing a subset of the overall 50 ha forest dynamics plot at BCI.
 
 ```{r}
 
@@ -237,7 +239,7 @@ We use the ['spatstat.geom' package](https://spatstat.org/) to efficiently calcu
 
 Because this example only includes one census interval (two censuses total), we will subset down to just the first census to calculate neighborhood density.
 
-If the data set were to contain multiple census intervals, it would be necessary to calculate neighborhood density separately for each individual in each census interval, using only the individuals that were alive at the beginning of that census interval.
+If the data set were to contain multiple census intervals, it would be necessary to calculate neighborhood density separately for each individual in each census interval, using only the individuals that were alive at the beginning of that census interval, or using an average density value between two consecutive censuses.
 
 ```{r}
 
@@ -315,13 +317,13 @@ Next, we add columns to our neighbors data set that indicates the distance decay
 # Loop through distance decay values
 for(x in 1:length(decay_values)){
   
-  #  Add in column for distance decay multiplier for each decay value
+  #  Add column for distance decay multiplier for each decay value
   # add _ba suffix to column name - will eventually be summed based on
   # number of individual neighbors
   neighbors[, paste0(decay_names[x], "_N")] <- exponential_decay(mu = decay_values[x], 
                                                    distance = neighbors$d)
   
-  # Weight distance decay multiplier by basal area of neighbor
+  # Weight basal area by distance decay multiplier
   # add _ba suffix to column name
   neighbors[, paste0(decay_names[x], "_BA")] <- exponential_decay(
                                                 mu = decay_values[x], 
@@ -338,12 +340,12 @@ head(neighbors)
 
 ## Calculate neighborhood density
 
-Then we summarize neighborhood density for each focal tree separately for conspecifics and heterospecifics.
+Then we summarize the neighborhood density for each focal tree separately for conspecifics and heterospecifics.
 
 ```{r, message=FALSE}
 
 # Simple calculations of number of neighbors and total basal area, 
-# ignoring distance decay
+# ignoring distance decay multiplier
 neighbors_summary <- neighbors %>%
                      group_by(i, comparison_type) %>%
                      summarise(nodecay_N = n(), # count of neighbors
@@ -387,9 +389,9 @@ neighbors_summary$treeID<-dat_first_census$treeID[neighbors_summary$i]
 head(neighbors_summary)
 ```
 
-As described in the main text, it can be advantageous to use total density that includes both conspecific and heterospecific density as a covariate, rather than only heterospecific density.
+As described in the main text, it can be advantageous to use total density that includes combined conspecific and heterospecific densities as a covariate, rather than heterospecific density.
 
-Here, we calculate overall density by summing heterospecific and conspecific densities.
+Here, we calculate total density by summing heterospecific and conspecific densities.
 
 ```{r, message=FALSE}
 
@@ -398,13 +400,13 @@ Here, we calculate overall density by summing heterospecific and conspecific den
 neighbors_summary_long_format <-  neighbors_summary %>%
                                   pivot_longer(cols = -c("i", "comparison_type", "treeID"))
 
-# Sum across heterospecific and conspecific values and rename to 'all'
+# Sum across heterospecific and conspecific values and rename to 'total'
 neighbors_total_long_format <- neighbors_summary_long_format %>%
                                 group_by(i, treeID, name) %>%
                                 summarize(value = sum(value)) %>%
-                                mutate(comparison_type = "all")
+                                mutate(comparison_type = "total")
 
-# Bind together conspecific and 'all' densities
+# Bind together conspecific and 'total' densities
 # remove heterospecific columns
 # fill in 0s where there are no neighbors
 neighbors_summary_total = bind_rows(neighbors_summary_long_format,
@@ -424,7 +426,7 @@ neighbors_summary_total = bind_rows(neighbors_summary_long_format,
 
 To determine the 'best' decay parameter to use, we fit species-specific mortality models using Generalized Additive Models [GAMs](https://noamross.github.io/gams-in-r-course/) and compare models based on log likelihoods. GAMs are flexible statistical models that combine linear and non-linear components to capture complex relationships in data.
 
-We first create our data set that we will use in the GAMs, subsetting down to just one census interval (because our example dataset only has 2 censuses) and removing trees close to the edge. In other datasets, you may have multiple census intervals, where it would be common practice to include 'year' or 'census' as a random effect in the model, but otherwise the overall approach is similar.
+We first create our data set that we will use in the GAMs, subsetting down to just one census interval (because our example dataset only has 2 censuses) and removing trees close to the edge as above. In other datasets, you may have multiple census intervals, where it would be common practice to include 'year' or 'census' as a random effect in the model, but otherwise the overall approach is similar.
 
 ```{r, message=FALSE}
 
@@ -433,7 +435,7 @@ dat_gam <- left_join(dat_first_census,
                                neighbors_summary_total,
                                by = "treeID")
 
-# Remove edge trees
+# Remove edge trees (these will have NAs for densities calcualations)
 dat_gam <- dat_gam %>%
                     filter(edge == FALSE)
 
@@ -451,11 +453,11 @@ sp_summary <- dat_gam %>%
             range_con_BA = max(con_nodecay_BA) - min(con_nodecay_BA),
             max_con_BA = max(con_nodecay_BA),
             unique_con_BA = length(unique(con_nodecay_BA)),
-            unique_all_BA = length(unique(all_nodecay_BA)),
+            unique_total_BA = length(unique(total_nodecay_BA)),
             range_con_N = max(con_nodecay_N) - min(con_nodecay_N),
             max_con_N = max(con_nodecay_N),
             unique_con_N = length(unique(con_nodecay_N)),
-            unique_all_N = length(unique(all_nodecay_N)),
+            unique_total_N = length(unique(total_nodecay_N)),
             unique_dbh = length(unique(dbh))
   )
 
@@ -466,7 +468,7 @@ sp_summary <- sp_summary %>%
 
 ```
 
-In this long block of code, we loop over all possible combinations of decay values for neighborhood densities weighted by abundance (N) and size (BA) for each species and fit a separate GAM for each model. For each GAM, we assess whether the model was able to be fit, and if it was able to be fit, whether it converged and for potential warnings. We save the results of successful model fits into a list that we will process later.
+In this long block of code, we loop over all possible combinations of decay values for different metrics of neighborhood densities weighted by distance for each species and fit a separate GAM for each model. For each GAM, we assess whether the model was able to be fit, and when it was able to be fit, whether it converged or produced warnings. We save the results of successful model fits into a list that we will process later.
 
 For large datasets where individual GAMs take a long time to run, the code could be modified to run in parallel, either locally on a personal computer or across a computing cluster.
 
@@ -505,7 +507,7 @@ for(run_settings_row in 1:nrow(run_settings)){
 
   # Create model formula
   # Initial DBH included as predictor variable
-  form =  paste0("mort_next ~ s(dbh, k = k1) + s(all_", decay_total, 
+  form =  paste0("mort_next ~ s(dbh, k = k1) + s(total_", decay_total, 
                               "_", nhood_data_type, 
                               ", k = k2)  + s(con_", decay_con, 
                               "_", nhood_data_type, 
@@ -521,8 +523,8 @@ for(run_settings_row in 1:nrow(run_settings)){
     if (k1 > sp_summary$unique_dbh[sp_summary$sp == species]) { 
       k1 = sp_summary$unique_dbh[sp_summary$sp == species] - 2
     }
-    if (k2 > sp_summary$unique_all_N[sp_summary$sp == species]) {
-      k2 = sp_summary$unique_all_N [sp_summary$sp == species]- 2
+    if (k2 > sp_summary$unique_total_N[sp_summary$sp == species]) {
+      k2 = sp_summary$unique_total_N [sp_summary$sp == species]- 2
     }
     if (k3 > sp_summary$unique_con_N[sp_summary$sp == species]) { 
       k3 = sp_summary$unique_con_N[sp_summary$sp == species] - 2 
@@ -585,25 +587,7 @@ for(run_settings_row in 1:nrow(run_settings)){
 
 ## Summarize model fits
 
-Next, we will extract regression coefficients into a dataframe using broom::tidy()
-
-```{r}
-# Extract coefficients for each model into a list
-coefs = lapply(res_mod, broom::tidy) 
-
-# Add a column for model run to each object in the list
-coefs = Map(cbind, coefs, run_name = names(coefs)) 
-coefs = do.call(rbind, coefs) # Bind elements of list together by rows
-rownames(coefs) <- NULL # Remove row names
-coefs <- coefs %>%
-          select(run_name, everything()) # Rearrange columns
-
-# Take a look at the data
-knitr::kable(head(coefs), digits = 2, booktabs = T) %>%
-  kable_styling(latex_options = c("striped", "scale_down"))
-```
-
-Next we will extract model summaries for each model with broom::glance() that provides key information like degrees of freedom, log likelihood, AIC, etc.
+Next we will extract summaries for each model with broom::glance() that provides key information like degrees of freedom, log likelihood, AIC, etc.
 
 ```{r}
 # Extract summaries for each model into a list
@@ -634,7 +618,7 @@ knitr::kable(head(sums), digits = 2) %>%
   kable_styling(latex_options = c("striped", "scale_down"))
 ```
 
-Due to limited sample sizes, it is likely that GAMs will not fit for each species. For example, in the table below of summary data of species where models did not successfully fit/converge, there are several instances of where all individuals of the species survived during the census, leading to no mortality events to use in the model.\
+Due to limited sample sizes, it is likely that GAMs will not fit for each species. For example, in the table below of summary data for species where models did not successfully fit/converge, there are several instances where all individuals of the species survived during the census, leading to no mortality events to use in the model.\
 \
 We need to exclude species without complete model runs from our overall calculations when looking for optimal decay parameters across the entire data set.
 
@@ -680,6 +664,8 @@ knitr::kable(sp_summary[sp_summary$sp %in% incomplete, ],
 
 We then summarize different model criteria across all species runs. To look for the optimal value for decay parameters, we sum log likelihoods across all species for a given decay parameter combination and choose the resulting parameter combination with the highest summed log likelihood.
 
+One crucial point is that each run of the grid search should be done with the same set of trees, even if smaller neighborhodoes not need a buffer of 30 m.
+
 ```{r, message=FALSE}
 sums_total <- sums %>% 
               filter(!sp %in% incomplete) %>%
@@ -692,7 +678,7 @@ sums_total <- sums %>%
 sums_total
 ```
 
-We create a heatmap plot @fig-optim of summed log likelihoods for all parameter combinations across all species, with the optimal parameter combination marked with an X
+We then create a heatmap plot @fig-optim of summed log likelihoods for all fixed devay (mu) parameter combinations across all species, with the optimal parameter combination marked with an X
 
 ```{r}
 #| label: fig-optim
@@ -742,7 +728,7 @@ sums_total_by_spp <- sums %>%
 sums_total_by_spp
 ```
 
-We create a heatmap plot @fig-optim-spp of log likelihoods for all parameter combinations for each species separately, with the optimal parameter combination marked with an X. We only display the first three species here, because with data sets containing many species, it will be hard to visualize all the species on one graph and you may need to subdivide the plot further for visualization.
+We create a heatmap plot @fig-optim-spp of log likelihoods for all fixed decay parameter combinations for each species separately, with the optimal parameter combination marked with an X. We only display the first three species here, because with data sets containing many species, it's hard to visualize all the species on one graph and you may wish to subdivide the plot further for visualization.
 
 ```{r fig.height = 10, fig.width=8}
 #| label: fig-optim-spp
