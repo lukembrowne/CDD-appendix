@@ -7,22 +7,22 @@ execute:
   cache: true
 ---
 
-# Using Meta-regressions to Compare CDD across Species or Sites
+# Using meta-regressions to compare CDD across species or sites
 
 ## Overview
 
-Following from *Section 4. How does CDD vary across species, abiotic gradients or in time?* in the main text, here, we demonstrate one approach to comparing the strength of CDD across species using a meta-analysis framework. The same approach can be used to compare CDD across sites, plots, or any other unit of interest, as long as it is possible to generate reliable estimates of the strength of CDD (suitable sample sizes, etc.). As noted in the main text, "*Correct propagation of uncertainty in CDD estimates requires meta-regressions in frequentist or Bayesian frameworks. Weighted regressions (e.g., lm, lmer, gam) can also estimate how CDD varies e.g., across latitude or between species with different life-history strategies, but incorrectly estimate the associated uncertainty.*"
+Following from *Section 4. How does CDD vary across species, abiotic gradients or in time?* in the main text of the article, here, we demonstrate one approach to comparing the strength of CDD across species using a meta-analysis framework. The same approach can be used to compare CDD across sites, plots, or any other unit of interest, as long as it is possible to generate reliable estimates of the strength of CDD (suitable sample sizes, etc.). As noted in the main text, "*Correct propagation of uncertainty in CDD estimates requires meta-regressions in frequentist or Bayesian frameworks. Weighted regressions (e.g., lm, lmer, gam) can also estimate how CDD varies e.g., across latitude or between species with different life-history strategies, but incorrectly estimate the associated uncertainty.*"
 
 We use a subset of the BCI seedling data [@comita2023long] of only 30 species to compare how species abundance is related to the strength of CDD at the species level. This is the same dataset used in section 2. This analysis is for demonstration purposes only, and biological conclusions should not be made about the results, given this is only a small subset of the data.
 
 An advantage of using meta-regressions over simple weighted regressions is that the models are able to simultaneously account for uncertainty in species-specific CDD estimates as well as systematic differences in species' CDD when regressed against a predictor via the inclusion of random effects. A simple weighted regression, on the other hand, assumes that there is only one error for which the relative strength is known when regressing the estimates against a predictor. The latter can lead to incorrect weighting of species in the metaregression.
 
-In this tutorial, we use relative average marginal effect (𝑟𝐴𝑀𝐸) calculated in the previous chapter as our response variable, calculated separately for each species. 𝑟𝐴𝑀𝐸 in this case estimates the relative increase in the probability of annual mortality with the addition of one new conspecific neighbor, while keeping total densities constant. Positive numbers indicate a relative increase in mortality with an increase in conspecific density, a signature of NCDD. In principle, any metric of the strength of CDD can be used, though care must be taken to ensure that the metrics are comparable across species and sites (see main text for more information).
+In this tutorial, we use relative average marginal effect (𝑟𝐴𝑀𝐸) calculated in the previous chapter as our response variable, calculated separately for each species. 𝑟𝐴𝑀𝐸 in this case estimates the relative increase in the probability of annual mortality with the addition of one new conspecific neighbor, while keeping total densities constant. Positive numbers indicate a relative increase in mortality with an increase in conspecific density, a signature of negative CDD. In principle, any metric of the strength of CDD can be used, though care must be taken to ensure that the metrics are comparable across species and sites (see main text for more information).
 
 We use the popular [metafor package](https://www.metafor-project.org/doku.php/metafor) to fit the meta-regression models.
 
 ::: callout-note
-The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hülsmann](https://demographicecology.com/).
+The following code is adapted from the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by [Lisa Hülsmann](https://demographicecology.com/) as demonstrated in the publication @hulsmann2024latitudinal.
 :::
 
 ## Load libraries and data
@@ -76,6 +76,8 @@ head(rAME, n = 10)
 
 First, we use the 'escalc' function in the metafor package to essentially repackage our data frame into a format used in the meta-regression model fitting. Since we already calculated our effect size (𝑟𝐴𝑀𝐸), we just pass through the 𝑟𝐴𝑀𝐸 estimate and corresponding standard error using the 'GEN' option for the 'measure' argument, rather than calculating an effect size within the 'escalc' function.
 
+In some cases, based upon inspecting the resulting residuals from the meta-regression model, it may be a good idea to transform 𝑟𝐴𝑀𝐸 estimates prior to meta-regression model fitting.
+
 ```{r}
 # Reformat data for model fitting
 # Set measure to generic, which passes the observed effect sizes or 
@@ -94,7 +96,7 @@ First, we use the 'escalc' function in the metafor package to essentially repack
 
 ## Fit meta-regression model
 
-Next, we use the 'rma' function to fit a meta-regression model, where 𝑟𝐴𝑀𝐸 is our response variable (renamed as yi in the previous step) and log species abundance is our predictor. While not shown here, it is possible to fit mixed effects meta-regression models with the 'rma.mv' function. We suggest consulting the [extensive documentation for the metafor package](https://www.metafor-project.org/doku.php/metafor) for further details.
+Next, we use the 'rma' function to fit a meta-regression model, where 𝑟𝐴𝑀𝐸 is our response variable (renamed as yi in the previous step) and log species abundance is our predictor. While not shown here, it is possible to fit more complicated mixed effects meta-regression models with the 'rma.mv' function. We suggest consulting the [extensive documentation for the metafor package](https://www.metafor-project.org/doku.php/metafor) for further details.
 
 ```{r}
 # Fit model
@@ -111,7 +113,7 @@ metamod = metafor::rma(yi = yi,
 summary(metamod)
 ```
 
-## Plot the estimated of rAME for all species with a forest plot
+## Plot the estimated rAME for all species with a forest plot
 
 In this case, a forest plot shows the estimates of the strength of CDD for individual species, here ordered by least to most abundant going from top to bottom.
 
@@ -182,4 +184,4 @@ ggplot(pred, aes(x = log_abundance, y = pred)) +
 
 ```
 
-In principle, the approach outlined in this appendix of estimating marginal effects followed by a meta-regression analysis can be used to test for a correlation between strength of CDD and other species-level traits (*e.g.*, wood density, leaf area, etc) or to determine how site-level CDD varies with site-level variables, such as latitude (Hülsmann et al. 202x), precipitation, soil fertility, etc. 
+In principle, the approach outlined in this appendix of estimating marginal effects followed by a meta-regression analysis can be used to test for a correlation between strength of CDD and other species-level traits (*e.g.*, wood density, leaf area, etc) or to determine how site-level CDD varies with site-level variables, such as latitude @hulsmann2024latitudinal precipitation, soil fertility, etc. 
