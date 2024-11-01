@@ -7,22 +7,19 @@ execute:
   cache: true
 ---
 
-# 3. Calculating Marginal Effects
+Calculating Marginal Effects
 
-This tutorial follows from Section 2. "Modeling considerations when estimating CDD" of the main text. 
-## 3.1 Overview
+This tutorial follows from Section 2. "Modeling considerations when estimating CDD" of the main text. ## 3.1 Overview
 
-In this section, we examine a *subset* of the Barro Colorado Island (BCI) 50-ha plot seedling [data](https://datadryad.org/stash/dataset/doi:10.5061/dryad.05qfttf85) to illustrate the impact of conspecific density on mortality probability. We calculate the Average Marginal Effect ([more about marginal effects in general here](https://marginaleffects.com/)) as our metric of the strength conspecific density dependence. We then estimate both the absolute Average Marginal Effect (aAME) and the relative Average Marginal Effect (rAME). The **aAME** represents the average absolute change in mortality probability due to a specified increase in conspecific density. In contrast, the **rAME** is the relative change in mortality probability compared to a baseline value.
+In this section, we examine a subset of the Barro Colorado Island (BCI) 50-ha plot seedling data to illustrate the impact of conspecific density on mortality probability. We calculate the Average Marginal Effect (more about marginal effects in general here) as our metric of the strength conspecific density dependence. We then estimate both the absolute Average Marginal Effect (aAME) and the relative Average Marginal Effect (rAME). The aAME represents the average absolute change in mortality probability due to a specified increase in conspecific density. In contrast, the rAME is the relative change in mortality probability compared to a baseline value.
 
-The standard approach for modeling plant CDD patterns presumes a linear relationship between performance (e.g., mortality) and conspecific neighborhood density metrics. However, in this section, we use ['Generalized Additive Models (GAMs)'](https://multithreaded.stitchfix.com/blog/2015/07/30/gam/) as they offer flexibility for non-linear relationships between performance and predictors when empirically suported.
+The standard approach for modeling plant CDD patterns presumes a linear relationship between performance (e.g., mortality) and conspecific neighborhood density metrics. However, in this section, we use 'Generalized Additive Models (GAMs)' as they offer flexibility for non-linear relationships between performance and predictors when empirically suported.
 
-::: callout-note
-Note: The code is adapted from [@hulsmann2024latitudinal] and the [latitudinalCNDD repository](https://github.com/LisaHuelsmann/latitudinalCNDD/tree/main/code) by Lisa Hüelsmann. 
-:::
+Note: The code is adapted from [@hulsmann2024latitudinal] and the latitudinalCNDD repository by Lisa Hülsmann.
 
-## 3.2 Load libraries
+Load libraries
 
-```{r, message=FALSE}
+{r, message=FALSE}
 
 # Load libraries
 library(readr)
@@ -36,39 +33,38 @@ library(mgcViz)
 library(mgcv)
 library(MASS)
 library(tidyr)
-```
 
-## 3.3 Load data
+Load data
 
-Our demonstration here used seedling data. We utilized a subset of the Barro Colorado Island (BCI) 50-ha forest dynamics plot seedling data, encompassing only 30 species. Seedlings are censused in 1x1 m plots, distributed at 5-m intervals throughout the 50-ha plot. In this example, neighbor densities are calculated using the number of conspecific and heterospecific seedling neighbors within the same 1x1m plot as the focal individual. Please note that this analysis is *solely for demonstration purposes*; hence, no biological conclusions should be drawn from the results due to the limited data subset used.
+Our demonstration here used seedling data. We utilized a subset of the Barro Colorado Island (BCI) 50-ha forest dynamics plot seedling data, encompassing only 30 species. Seedlings are censused in 1x1 m plots, distributed at 5-m intervals throughout the 50-ha plot. In this example, neighbor densities are calculated using the number of conspecific and heterospecific seedling neighbors within the same 1x1m plot as the focal individual. Please note that this analysis is solely for demonstration purposes; hence, no biological conclusions should be drawn from the results due to the limited data subset used.
 
 The code below assumes the data is in a format where each row is an observation for an individual from a census. For this particular data set, the column descriptions are as follows:
 
--   **Id**: unique identifier for each seedling
+Id: unique identifier for each seedling
 
--   **plot**: location
+plot: location
 
--   **spp**: species
+spp: species
 
--   **date:** date of observation
+date: date of observation
 
--   **year:** year of observation
+year: year of observation
 
--   **census**: census number
+census: census number
 
--   **status:** status at census, 0 = alive, 1 = dead
+status: status at census, 0 = alive, 1 = dead
 
--   **height.last.census**: height.last.census
+height.last.census: height.last.census
 
--   **con_dens:** number of conspecific neighbors within each seedling plot
+con_dens: number of conspecific neighbors within each seedling plot
 
--   **total_dens:** number of total neighbors
+total_dens: number of total neighbors
 
--   **het_dens:** number of heterospecifics neighbors
+het_dens: number of heterospecifics neighbors
 
--   **time.since.last.census**: time interval between censuses
+time.since.last.census: time interval between censuses
 
-```{r, message=FALSE}
+{r, message=FALSE}
 data_BCI <- read_csv("./data/BCI_seedling_data_30_spp_2023.csv")
 colnames(data_BCI)
 # make sure variables are taken as factor
@@ -77,11 +73,10 @@ data_BCI$spp <- factor(data_BCI$spp)
 data_BCI$plot <- factor(data_BCI$plot)
 data_BCI$height=data_BCI$height.last.census
 data_BCI$interval=as.numeric(data_BCI$time.since.last.census)
-```
 
 Let's take a quick look at the data set we'll be working with:
 
-```{r}
+{r}
   
 # Exploring data 
   # visualize 
@@ -91,15 +86,14 @@ Let's take a quick look at the data set we'll be working with:
        title = "Conspecific densities") + 
   theme_bw(12)
    
-```
 
-## 3.4 Handling "data deficient" species
+Handling "data deficient" species
 
-We categorize a species as *data deficient* if it has fewer than four unique conspecific density values. This threshold is important because estimating a reliable "slope" requires at least a few different values along the variable of interest. At the end of this section of the code, a data frame named **'nsp'** will be generated. This data frame will classify each species as either "data deficient" or "not data deficient".
+We categorize a species as data deficient if it has fewer than four unique conspecific density values. This threshold is important because estimating a reliable "slope" requires at least a few different values along the variable of interest. At the end of this section of the code, a data frame named 'nsp' will be generated. This data frame will classify each species as either "data deficient" or "not data deficient".
 
-From our data set 9 species out of 30 were assigned as *data deficient*. Here, we used the thresholds of 4 unique values of conspecific densities and a minimum range of 1 for conspecific as our thresholds for what constitutes a data deficient species.
+From our data set 9 species out of 30 were assigned as data deficient. Here, we used the thresholds of 4 unique values of conspecific densities and a minimum range of 1 for conspecific as our thresholds for what constitutes a data deficient species.
 
-```{r, message=FALSE, warning=FALSE}
+{r, message=FALSE, warning=FALSE}
 
 nval = 4  ## this is the number of 'unique' conspecific values 
 minrange = 1    # minimum range for conspecific density
@@ -128,21 +122,20 @@ nsp %>%
   head() %>%
   kable() %>%
   kable_styling(latex_options = c("striped", "scale_down"))
-```
 
-## 3.5 Function for fitting models
+Function for fitting models
 
 In the context of the Janzen-Connell Hypothesis, we focus on the differences between CDD and HDD ('Stabilizing effect'), where conspecific neighbors' negative effects surpass those from heterospecifics, leading to population stabilization [@broekman2019signs]. This effect is vital for estimating a species' self-limitation.
 
 In this section we quantify the conspecific density impact, using a model with conspecific density and total density. By using total density in the model instead of heterospecific density, the estimated effect (slope) of conspecific density in our analysis corresponds to the result of subtracting HDD from CDD [@hulsmann2024latitudinal].
 
-We use here a Generalized Additive Model (GAM) with a complementary log-log (cloglog) link function to model the seedling status ('alive' or 'dead') as a function of conspecific density **con_dens**, total density **total_dens** and tree height or size of the focal individual (e.g., height or dbh), the latter serving as a covariate.
+We use here a Generalized Additive Model (GAM) with a complementary log-log (cloglog) link function to model the seedling status ('alive' or 'dead') as a function of conspecific density con_dens, total density total_dens and tree height or size of the focal individual (e.g., height or dbh), the latter serving as a covariate.
 
-The cloglog link allows accounting for differences in observation time Δ𝑡 through an offset term, applicable to datasets where (0=alive and 1=dead)[@currie2016fitting].In other words, to use a cloglog link to account for differences in census interval length, you must be modeling mortality, not survival. ([more about cloglog link here - section 3.2](https://www.math.ntnu.no/emner/ST2304/2017v/Handout%204.pdf/))
+The cloglog link allows accounting for differences in observation time Δ𝑡 through an offset term, applicable to datasets where (0=alive and 1=dead)[@currie2016fitting].In other words, to use a cloglog link to account for differences in census interval length, you must be modeling mortality, not survival. (more about cloglog link here - section 3.2)
 
 Next, we specify the smooth term in the model formula. The k value determines the complexity of the smooth. If k exceeds the number of unique values in a variable, it's adjusted to be two less than that number. We also monitor model convergence and any warnings that may arise. With this setup, we establish 'k=2' as the minimum value since 'k=1' results in a linear relationship. Hence, we defined in the previous section a minimum of 4 unique values for conspecific densities as threshold, as setting a threshold of 3 would enforce linearity in the model.
 
-```{r, message=FALSE, warning=FALSE}
+{r, message=FALSE, warning=FALSE}
 
 # Define a function to fit a model to the given data
 model_fit = function(data, spinfo, reduced = F) {
@@ -242,13 +235,12 @@ model_convergence = function(model) {
   }
 }
 
-```
 
-## 3.6 Fit models
+Fit models
 
-Here we fit the models for all species. *Data deficient* species are treated as one group since there is not sufficient data to be treated independently. In this dataset, we have 9 species that are flagged as 'data deficient',
+Here we fit the models for all species. Data deficient species are treated as one group since there is not sufficient data to be treated independently. In this dataset, we have 9 species that are flagged as 'data deficient',
 
-```{r, message=FALSE, warning=FALSE}
+{r, message=FALSE, warning=FALSE}
 
 # Check the distribution of species marked as 'data deficient' 
 # (T or F) 
@@ -337,21 +329,19 @@ res_red_mod = list()
   }
 }
 
-```
 
-## 3.7 Summarize model fits
+Summarize model fits
 
 Regression table via broom::tidy()
 
-```{r}
+{r}
 coefs = lapply(res_mod, broom::tidy)
 coefs = Map(cbind, coefs, sp = names(coefs))
 coefs = do.call(rbind, coefs)
-```
 
 Model summary via broom::glance()
 
-```{r}
+{r}
 # For each model result in 'res_mod', extract summary statistics 
 # (like log-likelihood, AIC, BIC #, etc.) using the 'glance' function
 # from the 'broom' package
@@ -374,11 +364,10 @@ sums$AUC = unlist(aucs)
 sums$pseudoR2 = 1 - (unlist(lapply(res_mod, function(x) x$deviance)) /
                        unlist(lapply(res_red_mod, function(x) 
                          x$deviance)))
-```
 
-## 3.8 Plotting results
+Plotting results
 
-```{r}
+{r}
 # plot splines in pdf ----------------------------------------------
 
 # # Specify the name of the PDF file where the plots will be saved
@@ -412,9 +401,8 @@ for (i in 1:length(res_mod)) {
 dev.off()
 
 
-```
 
-```{R, echo=FALSE}
+{R, echo=FALSE}
 
 
 # # Specify the name of the PDF file where the plots will be saved
@@ -444,27 +432,26 @@ for (i in 1:length(res_mod)) {
   
 }
 
-```
 
-## 3.9 AMEs Absolute and Relative
+AMEs Absolute and Relative
 
 In this section we illustrate the calculation of the average marginal effects, including both the absolute Average Marginal Effect (aAME) and the relative Average Marginal Effect (rAME).
 
-Here, **AMEs** are computed by determining the marginal effect (essentially the partial derivative or slope) of a predictor for a unit change in conspecific density at each observed value, and then averaging these effects. This method yields a single, interpretable measure that offers an averaged estimate of the predictor's impact. It's worth noting that the AME, compared to traditional effect sizes, provides a clearer measure of a predictor's influence by quantifying the average change in the outcome for each unit change in the predictor rather than the raw coefficient (effect size) that may be influenced by the scale of the variable or confounded by interactions with other predictors. In the analyses illustrated here, we are interested in calculating the average marginal effect of conspecific density on mortality.
+Here, AMEs are computed by determining the marginal effect (essentially the partial derivative or slope) of a predictor for a unit change in conspecific density at each observed value, and then averaging these effects. This method yields a single, interpretable measure that offers an averaged estimate of the predictor's impact. It's worth noting that the AME, compared to traditional effect sizes, provides a clearer measure of a predictor's influence by quantifying the average change in the outcome for each unit change in the predictor rather than the raw coefficient (effect size) that may be influenced by the scale of the variable or confounded by interactions with other predictors. In the analyses illustrated here, we are interested in calculating the average marginal effect of conspecific density on mortality.
 
-Furthermore, **rAMEs** enhance the level of interpretability by delivering a normalized measure of these averaged effects. They represent the percentage change in the response variable due to a unit change in the predictor relative to the base mortality, providing an intuitive, relative grasp of the predictor's influence. This normalization process allows for the comparison of effects across different species, each with its own base level of mortality.
+Furthermore, rAMEs enhance the level of interpretability by delivering a normalized measure of these averaged effects. They represent the percentage change in the response variable due to a unit change in the predictor relative to the base mortality, providing an intuitive, relative grasp of the predictor's influence. This normalization process allows for the comparison of effects across different species, each with its own base level of mortality.
 
-To calculate **aAMEs** and **rAMEs** we need the file "res_model" that includes all the models results.
+To calculate aAMEs and rAMEs we need the file "res_model" that includes all the models results.
 
-There is also alternative approaches for calculating average marginal effects using ['marginaleffects' package](https://marginaleffects.com/articles/slopes.html) that we encourage the user to explore.
+There is also alternative approaches for calculating average marginal effects using 'marginaleffects' package that we encourage the user to explore.
 
-### 3.9.1 Settings for AMEs
+Settings for AMEs
 
-Here we provide three scenarios for calculating **aAMEs** or **rAMEs** through the **`change`** argument.
+Here we provide three scenarios for calculating aAMEs or rAMEs through the change argument.
 
-**Equilibrium**: This scenario computes **aAMEs** or **rAMEs** for a unit increase in conspecific density of above observed values, providing insight into the marginal effect of density increase in an existing ecosystem. **Invasion**: This scenario models the effects of introducing species into a new community in which it did not previously occur, transitioning the conspecific density from zero to a specified unit, helping understand the impact of sudden species introductions linking to theoretical considerations from coexistence theory [@chesson2000mechanisms]. **IQR**: This scenario evaluates **aAMEs** or **rAMEs** within the middle 50% range of conspecific density, offering a perspective on the ecological relevance of CDD within typical density ranges, however without being comparable among species.
+Equilibrium: This scenario computes aAMEs or rAMEs for a unit increase in conspecific density of above observed values, providing insight into the marginal effect of density increase in an existing ecosystem. Invasion: This scenario models the effects of introducing species into a new community in which it did not previously occur, transitioning the conspecific density from zero to a specified unit, helping understand the impact of sudden species introductions linking to theoretical considerations from coexistence theory [@chesson2000mechanisms]. IQR: This scenario evaluates aAMEs or rAMEs within the middle 50% range of conspecific density, offering a perspective on the ecological relevance of CDD within typical density ranges, however without being comparable among species.
 
-```{r}
+{r}
 
 #### chose predictors for local density -setting AMEs
   
@@ -497,13 +484,12 @@ change = list(equilibrium = data.frame(con_dens =
 # simulations
 iter = 500 
 
-```
 
-### 3.9.2 Functions to calculate aAMEs and rAME
+Functions to calculate aAMEs and rAME
 
-This section will write and define two functions. The setstep function and get_AME function. Get_AME is a function to calculate the Average Marginal Effects for a given term in a model. The function first creates two copies of the data, **`d0`** and **`d1`**, and adjusts the term of interest based on the **`change`** argument (one of the three scenarios described in the previous section). It then calculates the predictions for the two data sets and computes the marginal effects.
+This section will write and define two functions. The setstep function and get_AME function. Get_AME is a function to calculate the Average Marginal Effects for a given term in a model. The function first creates two copies of the data, d0 and d1, and adjusts the term of interest based on the change argument (one of the three scenarios described in the previous section). It then calculates the predictions for the two data sets and computes the marginal effects.
 
-```{r}
+{r}
 
 # Define a function to set the step size for numerical derivatives
 # This function determines an appropriate step size using machine's 
@@ -663,13 +649,12 @@ get_AME = function(mod, data, term
   }
 }
 
-```
 
-### 3.9.3 Calculating Absolute Average Marginal Effect (aAMEs)
+Calculating Absolute Average Marginal Effect (aAMEs)
 
-At the end of this code segment, the **aAME** data frame contains average marginal estimates for each predictor, each corresponding to different change scenarios. In essence, aAME provides the average effect that a predictor has on the outcome across these scenarios. On the other hand, the **aAMEsamples** data frame contains multiple samples of aAME for each predictor, each aligned with a specific type of change scenario, which allows for an evaluation of the uncertainty inherent in the aAME estimates.
+At the end of this code segment, the aAME data frame contains average marginal estimates for each predictor, each corresponding to different change scenarios. In essence, aAME provides the average effect that a predictor has on the outcome across these scenarios. On the other hand, the aAMEsamples data frame contains multiple samples of aAME for each predictor, each aligned with a specific type of change scenario, which allows for an evaluation of the uncertainty inherent in the aAME estimates.
 
-```{r}
+{r}
 # Absolute AMEs ---------------------------------------------------
 
 # Initialize empty data frames to store the results
@@ -720,13 +705,12 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
   }
 }
 head(AME)
-```
 
-### 3.9.4 Calculating Relative Average Marginal Effect (rAMEs)
+Calculating Relative Average Marginal Effect (rAMEs)
 
-At the end of this code segment, the **`rAME`** data frame contains the**`rAME`** estimates for the predictor and each type of change, and the **`rAMEsamples`** data frame contains the **`rAME`** samples for each predictor and type of change.
+At the end of this code segment, the rAME data frame contains therAME estimates for the predictor and each type of change, and the rAMEsamples data frame contains the rAME samples for each predictor and type of change.
 
-```{r}
+{r}
 # Relative rAMEs -----------------------------------------------------------
 
 
@@ -779,15 +763,14 @@ for (i in names(predictors)[grepl("con_", names(predictors))]) {
   }
 }
 head(rAME)
-```
 
-## 3.10 Saving results
+Saving results
 
-```{r}
+{r}
 # Save results ---------------------------------------------------
-save(list = c("aAME", "aAMEsamples", "rAME", "rAMEsamples", "nsp", 
+save(list = c("AME", "AMEsamples", "rAME", "rAMEsamples", "nsp", 
               "coefs", "sums") # "nsp_data_deficient"
      , file = paste0( "./data/mortality.Rdata"))
 write.csv(AME, "./data/aAME.csv")
 write.csv(rAME, "./data/rAME.csv")
-```
+
