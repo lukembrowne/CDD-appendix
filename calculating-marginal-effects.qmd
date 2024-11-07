@@ -125,10 +125,7 @@ data_BCI %>%
   ) -> nsp # Store the resulting dataframe in the object 'nsp'
 
 # Visualize the top rows of the table 'nsp' in a formatted manner
-nsp %>%
-  head() %>%
-  kable() %>%
-  kable_styling(latex_options = c("striped", "scale_down"))
+head(nsp)
 ```
 
 ## Function for fitting models
