@@ -36,6 +36,7 @@ library(readr)
 library(ggplot2)
 library(here)
 library(metafor)
+library(sessioninfo)
 
 # Load in species abundances for BCI data subset
 abundances <- read_csv(
