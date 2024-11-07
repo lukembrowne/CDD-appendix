@@ -4,7 +4,7 @@ project:
 book:
   title: "Appendix to Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies"
   author: ""
-  date: "10/31/2023"
+  date: "10/31/2024"
   search: true
   repo-url: https://github.com/lukembrowne/CDD-appendix
   repo-actions: [issue, source]
