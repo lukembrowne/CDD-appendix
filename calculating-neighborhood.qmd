@@ -616,8 +616,7 @@ sums <- sums %>%
                  everything()) 
 
 # Take a look at the model summaries
-knitr::kable(head(sums %>% select(run_name, df, logLik, AIC, nobs)), digits = 2) %>%
-  kable_styling(latex_options = c("striped", "scale_down", "smaller"))
+head(sums)
 ```
 
 Due to limited sample sizes, it is likely that GAMs will not fit for each species. For example, in the table below of summary data for species where models did not successfully fit/converge, there are several instances where all individuals of the species survived during the census, leading to no mortality events to use in the model.\
@@ -706,8 +705,7 @@ We then create a heatmap plot @fig-optim of summed log likelihoods for all fixed
 For this data set, the following are the optimal decay parameter values across all species separately for neighborhood density calculated by abundance (N) and by basal area (BA)
 
 ```{r}
-knitr::kable(optimum, digits = 2) %>%
-  kable_styling(latex_options = c("striped", "scale_down"))
+optimum
 ```
 
 ## Selecting optimum decay parameter values separately for each species
@@ -765,6 +763,5 @@ We create a heatmap plot @fig-optim-spp of log likelihoods for all fixed decay p
 For this data set, the following are the optimal decay parameter values for each species separately for neighborhood density calculated by abundance (N) and by basal area (BA):
 
 ```{r}
-knitr::kable(optimum_by_sp %>% select(run_name, logLik, AIC), digits = 2) %>%
-  kable_styling(latex_options = c("striped", "scale_down"))
+optimum_by_sp
 ```
