@@ -6,8 +6,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
-<meta name="author" content="Authors here–">
-<meta name="dcterms.date" content="2023-10-31">
+<meta name="dcterms.date" content="2024-10-31">
 
 <title>Appendix to Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies</title>
 <style>
@@ -55,7 +54,26 @@ div.sourceCode
 @media screen {
 pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
 }
-</style>
+
+div.csl-bib-body { }
+div.csl-entry {
+clear: both;
+}
+.hanging-indent div.csl-entry {
+margin-left:2em;
+text-indent:-2em;
+}
+div.csl-left-margin {
+min-width:2em;
+float:left;
+}
+div.csl-right-inline {
+margin-left:2em;
+padding-left:1em;
+}
+div.csl-indent {
+margin-left: 2em;
+}</style>
 
 
 <script>const headroomChanged = new CustomEvent("quarto-hrChanged", {
@@ -4519,7 +4537,7 @@ vertical-align: -.125em;
         <li class="sidebar-item">
   <div class="sidebar-item-container"> 
   <a href="./metaregression-comparisons.html" class="sidebar-item-text sidebar-link">
- <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Using Meta-regressions to Compare CDD across Species or Sites</span></span></a>
+ <span class="menu-text"><span class="chapter-number">4</span>&nbsp; <span class="chapter-title">Using meta-regressions to compare CDD across species or sites</span></span></a>
   </div>
 </li>
         <li class="sidebar-item">
@@ -4554,17 +4572,11 @@ vertical-align: -.125em;
 
 <div class="quarto-title-meta">
 
-    <div>
-    <div class="quarto-title-meta-heading">Author</div>
-    <div class="quarto-title-meta-contents">
-             <p>Authors here– </p>
-          </div>
-  </div>
     
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">October 31, 2023</p>
+      <p class="date">October 31, 2024</p>
     </div>
   </div>
   
@@ -4576,11 +4588,21 @@ vertical-align: -.125em;
 
 <section id="preface" class="level1" data-number="1">
 <h1 data-number="1"><span class="header-section-number">1</span> Preface</h1>
-<p>This document serves as an appendix to the manuscript <strong><em>Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies</em></strong>, with the goal of providing code and guidance on conducting analyses of density dependence following the best practices outlined in the main manuscript.</p>
+<p>This document serves as an appendix to the manuscript <strong><em>Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies</em></strong>, with the goal of providing code and guidance on conducting analyses of density dependence following the best practices outlined in the main manuscript and based on the publication <span class="citation" data-cites="hulsmann2024latitudinal">Hülsmann et al. (<a href="references.html#ref-hulsmann2024latitudinal" role="doc-biblioref">2024</a>)</span>.</p>
+<p>It is important to note that for many steps in the analysis, there are valid alternative approaches that could be used to model the data, each with their own strengths. For example, while we have chosen to largely follow the modeling approach of <span class="citation" data-cites="hulsmann2024latitudinal">Hülsmann et al. (<a href="references.html#ref-hulsmann2024latitudinal" role="doc-biblioref">2024</a>)</span> that uses Generalized Additive Models (GAMs) to capture the flexible, nonlinear effects of density dependence, other researchers may prefer linear or nonlinear parametric models. The semi-parametric nature of GAMs offers the advantage of flexibility, helping to avoid biases—particularly when interactions between variables are not strictly linear, as discussed in <span class="citation" data-cites="detto2019">Detto et al. (<a href="references.html#ref-detto2019" role="doc-biblioref">2019</a>)</span>. However, this flexibility can come at the cost of statistical power. When the functional form of the relationships is well understood or can be reasonably inferred, parametric models may offer a more efficient alternative.</p>
+<p>This document aims to provide a clear starting point for applying density dependence analyses, while recognizing that the choice of methods may need to be adapted to fit specific datasets and research questions.</p>
 
 
 <!-- -->
 
+<div id="refs" class="references csl-bib-body hanging-indent" role="list" style="display: none">
+<div id="ref-detto2019" class="csl-entry" role="listitem">
+Detto, Matteo, Marco D Visser, S Joseph Wright, and Stephen W Pacala. 2019. <span>“Bias in the Detection of Negative Density Dependence in Plant Communities.”</span> <em>Ecology Letters</em> 22 (September): 1923–39. <a href="https://doi.org/10.1111/ele.13372">https://doi.org/10.1111/ele.13372</a>.
+</div>
+<div id="ref-hulsmann2024latitudinal" class="csl-entry" role="listitem">
+Hülsmann, Lisa, Ryan A Chisholm, Liza Comita, Marco D Visser, Melina de Souza Leite, Salomon Aguilar, Kristina J Anderson-Teixeira, et al. 2024. <span>“Latitudinal Patterns in Stabilizing Density Dependence of Forest Communities.”</span> <em>Nature</em> 627 (8004): 564–71.
+</div>
+</div>
 </section>
 
 </main> <!-- /main -->
@@ -4879,7 +4901,11 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
 </nav><div class="modal fade" id="quarto-embedded-source-code-modal" tabindex="-1" aria-labelledby="quarto-embedded-source-code-modal-label" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable"><div class="modal-content"><div class="modal-header"><h5 class="modal-title" id="quarto-embedded-source-code-modal-label">Source Code</h5><button class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="">
 <div class="sourceCode" id="cb1" data-shortcodes="false"><pre class="sourceCode markdown code-with-copy"><code class="sourceCode markdown"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu"># Preface</span></span>
 <span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>This document serves as an appendix to the manuscript ***Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies***, with the goal of providing code and guidance on conducting analyses of density dependence following the best practices outlined in the main manuscript.</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>This document serves as an appendix to the manuscript ***Conspecific density dependence in plant communities: a theory-based toolkit for empirical studies***, with the goal of providing code and guidance on conducting analyses of density dependence following the best practices outlined in the main manuscript and based on the publication @hulsmann2024latitudinal.</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>It is important to note that for many steps in the analysis, there are valid alternative approaches that could be used to model the data, each with their own strengths. For example, while we have chosen to largely follow the modeling approach of @hulsmann2024latitudinal that uses Generalized Additive Models (GAMs) to capture the flexible, nonlinear effects of density dependence, other researchers may prefer linear or nonlinear parametric models. The semi-parametric nature of GAMs offers the advantage of flexibility, helping to avoid biases—particularly when interactions between variables are not strictly linear, as discussed in @detto2019. However, this flexibility can come at the cost of statistical power. When the functional form of the relationships is well understood or can be reasonably inferred, parametric models may offer a more efficient alternative.</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>This document aims to provide a clear starting point for applying density dependence analyses, while recognizing that the choice of methods may need to be adapted to fit specific datasets and research questions.</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div></div></div></div></div>
 </div> <!-- /content -->
 
